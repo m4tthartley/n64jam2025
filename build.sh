@@ -6,5 +6,5 @@
 # make
 # mv ./n64jam2025.z64 ./build/
 
-clang coretest.c $(coreconfig) -lX11 -lGL -o ./build/game
+clang coretest.c -g $(coreconfig) -lX11 -lGL -o ./build/game
 # ./build/game
