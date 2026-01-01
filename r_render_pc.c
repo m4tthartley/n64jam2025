@@ -15,10 +15,13 @@ typedef struct {
 	int16_t w, h;
 } vidrect_t;
 
+// 3+3+2+3 = 11*4 = 44
+// 3*4 + 3*2 + 2 + 4 = 24
 typedef struct {
 	vec3_t pos;
 	vec3_t normal;
 	vec2_t texcoord;
+	vec3_t color;
 } vertex_t;
 
 typedef struct {
@@ -114,6 +117,37 @@ vec3_t R_RotateVector(vec3_t v, vec3_t rotation)
 	return vector;
 }
 
+float TriangleArea(vec2_t v0, vec2_t v1, vec2_t v2)
+{
+	return
+		((v1.y-v0.y)*(v1.x+v0.x)
+		+ (v2.y-v1.y)*(v2.x+v1.x)
+		+ (v0.y-v2.y)*(v0.x+v2.x))
+		* 0.5f;
+}
+
+vec3_t BarycentricCoords(vec2_t coord, vec2_t v0, vec2_t v1, vec2_t v2)
+{
+	float total = TriangleArea(v0, v1, v2);
+	vec3_t result = {
+		TriangleArea(coord, v1, v2) / total,
+		TriangleArea(coord, v2, v0) / total,
+		TriangleArea(coord, v0, v1) / total,
+	};
+
+	if (result.x < 0.0f) {
+		result.x = 0.0f;
+	}
+	if (result.y < 0.0f) {
+		result.y = 0.0f;
+	}
+	if (result.z < 0.0f) {
+		result.z = 0.0f;
+	}
+
+	return result;
+}
+
 void R_DrawTriangles(vertex_t* verts, int count, color_t color)
 {
 	assert(count % 3 == 0);
@@ -123,41 +157,43 @@ void R_DrawTriangles(vertex_t* verts, int count, color_t color)
 	vidrect_t res = {0, 0, 320, 240};
 
 	for (int i=0; i<count; i+=3) {
-		vec3_t v0 = R_RotateVector(verts[i+0].pos, __rRotation);
-		vec3_t v1 = R_RotateVector(verts[i+1].pos, __rRotation);
-		vec3_t v2 = R_RotateVector(verts[i+2].pos, __rRotation);
+		vertex_t v0 = verts[i+0];
+		vertex_t v1 = verts[i+1];
+		vertex_t v2 = verts[i+2];
+		v0.pos = R_RotateVector(v0.pos, __rRotation);
+		v1.pos = R_RotateVector(v1.pos, __rRotation);
+		v2.pos = R_RotateVector(v2.pos, __rRotation);
+		// vertex_t* v = verts + i;
 		
-		v0.x += __rTranslation.x;
-		v0.y += __rTranslation.y;
-		v1.x += __rTranslation.x;
-		v1.y += __rTranslation.y;
-		v2.x += __rTranslation.x;
-		v2.y += __rTranslation.y;
-
-		
+		v0.pos.x += __rTranslation.x;
+		v0.pos.y += __rTranslation.y;
+		v1.pos.x += __rTranslation.x;
+		v1.pos.y += __rTranslation.y;
+		v2.pos.x += __rTranslation.x;
+		v2.pos.y += __rTranslation.y;
 
 		// Order vertices along y lowest to highest
-		if (v1.y < v0.y) SWAP(v0, v1);
-		if (v2.y < v1.y) SWAP(v1, v2);
-		if (v1.y < v0.y) SWAP(v0, v1);
+		if (v1.pos.y < v0.pos.y) SWAP(v0, v1);
+		if (v2.pos.y < v1.pos.y) SWAP(v1, v2);
+		if (v1.pos.y < v0.pos.y) SWAP(v0, v1);
 
 		// First half
 		int line = 0;
-		float lineStart = v0.x;
-		float lineEnd = v0.x;
-		vec2_t longEdgePoint = {v0.x + ((v1.y-v0.y) / (v2.y-v0.y) * (v2.x-v0.x)), v1.y};
+		float lineStart = v0.pos.x;
+		float lineEnd = v0.pos.x;
+		vec2_t longEdgePoint = {v0.pos.x + ((v1.pos.y-v0.pos.y) / (v2.pos.y-v0.pos.y) * (v2.pos.x-v0.pos.x)), v1.pos.y};
 		vec2_t startPoint = longEdgePoint;
-		vec2_t endPoint = v1.xy;
+		vec2_t endPoint = v1.pos.xy;
 		if (endPoint.x < startPoint.x) {
 			SWAP(startPoint, endPoint);
 		}
-		float startStep = (startPoint.x-v0.x) / (startPoint.y-v0.y);
-		float endStep = (endPoint.x-v0.x) / (endPoint.y-v0.y);
+		float startStep = (startPoint.x-v0.pos.x) / (startPoint.y-v0.pos.y);
+		float endStep = (endPoint.x-v0.pos.x) / (endPoint.y-v0.pos.y);
 		
 		// ++lineEnd.x;
-		int lineCount = v1.y-v0.y;
-		if ((int)v0.y != (int)v1.y) {
-			for (int l=v0.y; l<=v1.y; ++l) {
+		int lineCount = v1.pos.y-v0.pos.y;
+		if ((int)v0.pos.y != (int)v1.pos.y) {
+			for (int l=v0.pos.y; l<=v1.pos.y; ++l) {
 				float start = lineStart;
 				float end = lineEnd;
 				// if (startPoint.x > v0.x) {
@@ -171,12 +207,25 @@ void R_DrawTriangles(vertex_t* verts, int count, color_t color)
 				// 	end = max(lineEnd, endPoint.x);
 				// }
 				for (int x=start; x<=end; ++x) {
-					if (startPoint.x < v0.x && x < startPoint.x) {
+					if (startPoint.x < v0.pos.x && x < startPoint.x) {
 						continue;
 					}
-					if (endPoint.x > v0.x && x > endPoint.x) {
+					if (endPoint.x > v0.pos.x && x > endPoint.x) {
 						continue;
 					}
+
+					vec3_t triCoords = BarycentricCoords(vec2(x, l), v0.pos.xy, v1.pos.xy, v2.pos.xy);
+					vec3_t color3 = {
+						v0.color.r*triCoords.f[0] + v1.color.r*triCoords.f[1] + v2.color.r*triCoords.f[2],
+						v0.color.g*triCoords.f[0] + v1.color.g*triCoords.f[1] + v2.color.g*triCoords.f[2],
+						v0.color.b*triCoords.f[0] + v1.color.b*triCoords.f[1] + v2.color.b*triCoords.f[2],
+					};
+
+					uint32_t color =
+						((uint32_t)(color3.r*255.0f)<<0) |
+						((uint32_t)(color3.g*255.0f)<<8) |
+						((uint32_t)(color3.b*255.0f)<<16);
+
 					framebuffer[l*res.w + x] = color;
 				}
 
@@ -187,17 +236,29 @@ void R_DrawTriangles(vertex_t* verts, int count, color_t color)
 
 		// Second half
 		lineStart = longEdgePoint.x;
-		lineEnd = v1.x;
-		startStep = (v2.x-longEdgePoint.x) / (v2.y-longEdgePoint.y);
-		endStep = (v2.x-v1.x) / (v2.y-v1.y);
-		if (v1.x < longEdgePoint.x) {
+		lineEnd = v1.pos.x;
+		startStep = (v2.pos.x-longEdgePoint.x) / (v2.pos.y-longEdgePoint.y);
+		endStep = (v2.pos.x-v1.pos.x) / (v2.pos.y-v1.pos.y);
+		if (v1.pos.x < longEdgePoint.x) {
 			SWAP(lineStart, lineEnd);
 			SWAP(startStep, endStep);
 		}
 
 		// if ((int)v2.y != (int)v1.y) {
-			for (int l=v1.y; l<=v2.y; ++l) {
+			for (int l=v1.pos.y; l<=v2.pos.y; ++l) {
 				for (int x=lineStart; x<=lineEnd; ++x) {
+					vec3_t triCoords = BarycentricCoords(vec2(x, l), v0.pos.xy, v1.pos.xy, v2.pos.xy);
+					vec3_t color3 = {
+						v0.color.r*triCoords.f[0] + v1.color.r*triCoords.f[1] + v2.color.r*triCoords.f[2],
+						v0.color.g*triCoords.f[0] + v1.color.g*triCoords.f[1] + v2.color.g*triCoords.f[2],
+						v0.color.b*triCoords.f[0] + v1.color.b*triCoords.f[1] + v2.color.b*triCoords.f[2],
+					};
+
+					uint32_t color =
+						((uint32_t)(color3.r*255.0f)<<0) |
+						((uint32_t)(color3.g*255.0f)<<8) |
+						((uint32_t)(color3.b*255.0f)<<16);
+
 					framebuffer[l*res.w + x] = color;
 				}
 
@@ -206,9 +267,9 @@ void R_DrawTriangles(vertex_t* verts, int count, color_t color)
 			}
 		// }
 
-		R_BlitPixel(v0.x, v0.y, 0xFFFFFF);
-		R_BlitPixel(v1.x, v1.y, 0xFFFFFF);
-		R_BlitPixel(v2.x, v2.y, 0xFFFFFF);
+		R_BlitPixel(v0.pos.x, v0.pos.y, 0xFFFFFF);
+		R_BlitPixel(v1.pos.x, v1.pos.y, 0xFFFFFF);
+		R_BlitPixel(v2.pos.x, v2.pos.y, 0xFFFFFF);
 	}
 }
 
@@ -265,9 +326,9 @@ void RenderTestScene()
 	R_DrawLineTriangles(verts, 6, 0x00FF00);
 
 	vertex_t verts2[] = {
-		{vec3(-28.0f, -20.0f, 0), .texcoord=vec2(0, 0)},
-		{vec3(+48.0f, +0.0f, 0), .texcoord=vec2(1, 0)},
-		{vec3(+12.0f, +28.0f, 0), .texcoord=vec2(1, 1)},
+		{vec3(-28.0f, -20.0f, 0), .texcoord=vec2(0, 0), .color=vec3(1, 0, 0)},
+		{vec3(+48.0f, +0.0f, 0), .texcoord=vec2(1, 0), .color=vec3(0, 1, 0)},
+		{vec3(+12.0f, +28.0f, 0), .texcoord=vec2(1, 1), .color=vec3(0, 0, 1)},
 	};
 	// vertex_t verts2[] = {
 	// 	{vec3(-28.0f, -5.0f, 0)},
