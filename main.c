@@ -45,6 +45,7 @@ typedef enum {
 	MODEL_HALL_BASE,
 	MODEL_HALL_WALL,
 	MODEL_SIDE_TABLE,
+	MODEL_CRYOPOD_BASE,
 	MODEL_COUNT,
 } modeltype_t;
 T3DModel* models[MODEL_COUNT];
@@ -128,6 +129,8 @@ int main()
 
 	models[MODEL_HALL_BASE] = t3d_model_load("rom:/hall_floor.t3dm");
 	models[MODEL_HALL_WALL] = t3d_model_load("rom:/hall_wall.t3dm");
+
+	models[MODEL_CRYOPOD_BASE] = t3d_model_load("rom:/cryopod_base.t3dm");
 
 	T3DViewport viewport = t3d_viewport_create();
 
@@ -226,6 +229,15 @@ int main()
 
 		// DrawTestQuad(verts, mModelFP);
 
+		t3d_mat4_identity(&mModel);
+		t3d_mat4_scale(&mModel, 1.0f/64, 1.0f/64, 1.0f/64);
+		t3d_mat4_translate(&mModel, 0, -1, 0);
+		t3d_mat4_to_fixed(fixedMats[fixedMatIndex], &mModel);
+		t3d_matrix_push(fixedMats[fixedMatIndex]);
+		t3d_model_draw(models[MODEL_CRYOPOD_BASE]);
+		t3d_matrix_pop(1);
+		++fixedMatIndex;
+
 		for (int mapy=0; mapy<MAP_SIZE_Y; ++mapy) {
 			for (int mapx=0; mapx<MAP_SIZE_X; ++mapx) {
 				assert(fixedMatIndex < FIXED_MAT_MAX);
@@ -236,17 +248,10 @@ int main()
 				T3DVec3 axis2 = {{0.0f, 1.0f, 0.0f}};
 				t3d_vec3_norm(&axis2);
 				
-				
 				// Mat4Rotate(&mModel, &axis2, rot);
 				t3d_mat4_scale(&mModel, 1.0f/64, 1.0f/64, 1.0f/64);
 				t3d_mat4_translate(&mModel, mapx, 0, mapy);
-				
-				
-				
-				
-				
-				
-				
+
 				t3d_mat4_to_fixed(fixedMats[fixedMatIndex], &mModel);
 				t3d_matrix_push(fixedMats[fixedMatIndex]);
 

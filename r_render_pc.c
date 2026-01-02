@@ -34,6 +34,16 @@ vec3_t __rTranslation = {0};
 vec3_t __rRotation = {0};
 texture_t* __rActiveTexture = NULL;
 
+uint32_t Color32(float r, float g, float b, float a)
+{
+	uint32_t color =
+		(uint32_t)(r*255.0f) |
+		(uint32_t)(g*255.0f)<<8 |
+		(uint32_t)(b*255.0f)<<16 |
+		(uint32_t)(a*255.0f)<<24;
+	return color;
+}
+
 void R_SetTranslation(vec3_t translation)
 {
 	__rTranslation = translation;
@@ -148,6 +158,29 @@ vec3_t BarycentricCoords(vec2_t coord, vec2_t v0, vec2_t v1, vec2_t v2)
 	return result;
 }
 
+vertex_t LerpTriVetices(vec2_t coord, vertex_t v0, vertex_t v1, vertex_t v2)
+{
+	vec3_t t = BarycentricCoords(vec2(coord.x, coord.y), v0.pos.xy, v1.pos.xy, v2.pos.xy);
+	vertex_t v;
+	v.pos = vec3f2(coord, 0);
+
+	vec3_t color3 = {
+		v0.color.r*t.x + v1.color.r*t.y + v2.color.r*t.z,
+		v0.color.g*t.x + v1.color.g*t.y + v2.color.g*t.z,
+		v0.color.b*t.x + v1.color.b*t.y + v2.color.b*t.z,
+	};
+
+	vec2_t texcoord = {
+		v0.texcoord.x*t.x + v1.texcoord.x*t.y + v2.texcoord.x*t.z,
+		v0.texcoord.y*t.x + v1.texcoord.y*t.y + v2.texcoord.y*t.z,
+	};
+
+	v.color = color3;
+	v.texcoord = texcoord;
+
+	return v;
+}
+
 void R_DrawTriangles(vertex_t* verts, int count, color_t color)
 {
 	assert(count % 3 == 0);
@@ -214,19 +247,25 @@ void R_DrawTriangles(vertex_t* verts, int count, color_t color)
 						continue;
 					}
 
-					vec3_t triCoords = BarycentricCoords(vec2(x, l), v0.pos.xy, v1.pos.xy, v2.pos.xy);
-					vec3_t color3 = {
-						v0.color.r*triCoords.f[0] + v1.color.r*triCoords.f[1] + v2.color.r*triCoords.f[2],
-						v0.color.g*triCoords.f[0] + v1.color.g*triCoords.f[1] + v2.color.g*triCoords.f[2],
-						v0.color.b*triCoords.f[0] + v1.color.b*triCoords.f[1] + v2.color.b*triCoords.f[2],
-					};
+					// vec3_t triCoords = BarycentricCoords(vec2(x, l), v0.pos.xy, v1.pos.xy, v2.pos.xy);
+					// vec3_t color3 = {
+					// 	v0.color.r*triCoords.f[0] + v1.color.r*triCoords.f[1] + v2.color.r*triCoords.f[2],
+					// 	v0.color.g*triCoords.f[0] + v1.color.g*triCoords.f[1] + v2.color.g*triCoords.f[2],
+					// 	v0.color.b*triCoords.f[0] + v1.color.b*triCoords.f[1] + v2.color.b*triCoords.f[2],
+					// };
+
+					vertex_t v = LerpTriVetices(vec2(x, l), v0, v1, v2);
 
 					uint32_t color =
-						((uint32_t)(color3.r*255.0f)<<0) |
-						((uint32_t)(color3.g*255.0f)<<8) |
-						((uint32_t)(color3.b*255.0f)<<16);
+						((uint32_t)(v.color.r*255.0f)<<0) |
+						((uint32_t)(v.color.g*255.0f)<<8) |
+						((uint32_t)(v.color.b*255.0f)<<16);
 
-					framebuffer[l*res.w + x] = color;
+					int tx = (float)__rActiveTexture->width * v.texcoord.x;
+					int ty = (float)__rActiveTexture->height * v.texcoord.y;
+					uint32_t texel = __rActiveTexture->texels[ty*__rActiveTexture->width+tx];
+
+					framebuffer[l*res.w + x] = texel;
 				}
 
 				lineStart += startStep;
@@ -247,19 +286,31 @@ void R_DrawTriangles(vertex_t* verts, int count, color_t color)
 		// if ((int)v2.y != (int)v1.y) {
 			for (int l=v1.pos.y; l<=v2.pos.y; ++l) {
 				for (int x=lineStart; x<=lineEnd; ++x) {
-					vec3_t triCoords = BarycentricCoords(vec2(x, l), v0.pos.xy, v1.pos.xy, v2.pos.xy);
-					vec3_t color3 = {
-						v0.color.r*triCoords.f[0] + v1.color.r*triCoords.f[1] + v2.color.r*triCoords.f[2],
-						v0.color.g*triCoords.f[0] + v1.color.g*triCoords.f[1] + v2.color.g*triCoords.f[2],
-						v0.color.b*triCoords.f[0] + v1.color.b*triCoords.f[1] + v2.color.b*triCoords.f[2],
-					};
+
+					// vec3_t triCoords = BarycentricCoords(vec2(x, l), v0.pos.xy, v1.pos.xy, v2.pos.xy);
+					// vec3_t color3 = {
+					// 	v0.color.r*triCoords.f[0] + v1.color.r*triCoords.f[1] + v2.color.r*triCoords.f[2],
+					// 	v0.color.g*triCoords.f[0] + v1.color.g*triCoords.f[1] + v2.color.g*triCoords.f[2],
+					// 	v0.color.b*triCoords.f[0] + v1.color.b*triCoords.f[1] + v2.color.b*triCoords.f[2],
+					// };
+
+					// uint32_t color =
+					// 	((uint32_t)(color3.r*255.0f)<<0) |
+					// 	((uint32_t)(color3.g*255.0f)<<8) |
+					// 	((uint32_t)(color3.b*255.0f)<<16);
+
+					vertex_t v = LerpTriVetices(vec2(x, l), v0, v1, v2);
 
 					uint32_t color =
-						((uint32_t)(color3.r*255.0f)<<0) |
-						((uint32_t)(color3.g*255.0f)<<8) |
-						((uint32_t)(color3.b*255.0f)<<16);
+						((uint32_t)(v.color.r*255.0f)<<0) |
+						((uint32_t)(v.color.g*255.0f)<<8) |
+						((uint32_t)(v.color.b*255.0f)<<16);
 
-					framebuffer[l*res.w + x] = color;
+					int tx = (float)__rActiveTexture->width * v.texcoord.x;
+					int ty = (float)__rActiveTexture->height * v.texcoord.y;
+					uint32_t texel = __rActiveTexture->texels[ty*__rActiveTexture->width+tx];
+
+					framebuffer[l*res.w + x] = texel;
 				}
 
 				lineStart += startStep;
@@ -281,12 +332,28 @@ void RenderTestScene()
 		texture.width = 32;
 		texture.height = 32;
 		texture.texels = sys_alloc_memory(texture.width*texture.height*sizeof(color_t));
-		for (int i=0; i<texture.width*texture.height; ++i) {
-			texture.texels[i] = rand() & 0xFF;
+		// for (int i=0; i<texture.width*texture.height; ++i) {
+		// 	texture.texels[i] = rand() & 0xFF;
+		// }
+		for (int y=0; y<32; ++y) {
+			for (int x=0; x<32; ++x) {
+				// float r = rand() & 0xFF;
+				// texture.texels[y*32+x] = (int)(r*((float)y/32)) | (int)(r*(1.0f-(float)y/32))<<8;
+
+				// texture.texels[y*32+x] = 255*(y&1) | (255<<8)*(!(y&1)) | (255<<16)*(x&4);
+
+				texture.texels[y*32+x] = Color32((float)(32-x)/32, (float)(x)/32, (float)(y)/32, 0);
+			}
 		}
 	}
 
 	R_Clear();
+
+	for (int y=0; y<32; ++y) {
+		for (int x=0; x<32; ++x) {
+			framebuffer[(240-10-y) * 320 + (10+x)] = texture.texels[y*32+x];
+		}
+	}
 
 	// for (int i=0; i<320*240; ++i) {
 		static int i = 0;
