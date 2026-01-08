@@ -6,6 +6,7 @@
 #include "core/sys.h"
 #include <core/core.h>
 #include <core/math.h>
+#include <core/time.h>
 
 
 typedef uint32_t color_t;
@@ -139,6 +140,7 @@ float TriangleArea(vec2_t v0, vec2_t v1, vec2_t v2)
 vec3_t BarycentricCoords(vec2_t coord, vec2_t v0, vec2_t v1, vec2_t v2)
 {
 	float total = TriangleArea(v0, v1, v2);
+	// total = fabs(total);
 	vec3_t result = {
 		TriangleArea(coord, v1, v2) / total,
 		TriangleArea(coord, v2, v0) / total,
@@ -148,11 +150,20 @@ vec3_t BarycentricCoords(vec2_t coord, vec2_t v0, vec2_t v1, vec2_t v2)
 	if (result.x < 0.0f) {
 		result.x = 0.0f;
 	}
+	if (result.x >= 1.0f) {
+		result.x = 0.999f;
+	}
 	if (result.y < 0.0f) {
 		result.y = 0.0f;
 	}
+	if (result.y >= 1.0f) {
+		result.y = 0.999f;
+	}
 	if (result.z < 0.0f) {
 		result.z = 0.0f;
+	}
+	if (result.z >= 1.0f) {
+		result.z = 0.999f;
 	}
 
 	return result;
@@ -171,8 +182,8 @@ vertex_t LerpTriVetices(vec2_t coord, vertex_t v0, vertex_t v1, vertex_t v2)
 	};
 
 	vec2_t texcoord = {
-		v0.texcoord.x*t.x + v1.texcoord.x*t.y + v2.texcoord.x*t.z,
-		v0.texcoord.y*t.x + v1.texcoord.y*t.y + v2.texcoord.y*t.z,
+		clamp(v0.texcoord.x*t.x + v1.texcoord.x*t.y + v2.texcoord.x*t.z, 0.001f, 0.999f),
+		clamp(v0.texcoord.y*t.x + v1.texcoord.y*t.y + v2.texcoord.y*t.z, 0.001f, 0.999f),
 	};
 
 	v.color = color3;
@@ -254,7 +265,18 @@ void R_DrawTriangles(vertex_t* verts, int count, color_t color)
 					// 	v0.color.b*triCoords.f[0] + v1.color.b*triCoords.f[1] + v2.color.b*triCoords.f[2],
 					// };
 
+					vec3_t t = BarycentricCoords(vec2(x, l), v0.pos.xy, v1.pos.xy, v2.pos.xy);
+
+					// if (t.x <= 0 || t.y <= 0 || t.z <= 0) {
+					// 	continue;
+					// }
+
 					vertex_t v = LerpTriVetices(vec2(x, l), v0, v1, v2);
+
+					uint32_t triColorViz =
+						((uint32_t)(t.r*255.0f)<<0) |
+						((uint32_t)(t.g*255.0f)<<8) |
+						((uint32_t)(t.b*255.0f)<<16);
 
 					uint32_t color =
 						((uint32_t)(v.color.r*255.0f)<<0) |
@@ -264,6 +286,10 @@ void R_DrawTriangles(vertex_t* verts, int count, color_t color)
 					int tx = (float)__rActiveTexture->width * v.texcoord.x;
 					int ty = (float)__rActiveTexture->height * v.texcoord.y;
 					uint32_t texel = __rActiveTexture->texels[ty*__rActiveTexture->width+tx];
+
+					uint32_t texCoordViz =
+						((uint32_t)((float)tx*8)<<0) |
+						((uint32_t)((float)ty*8)<<8);
 
 					framebuffer[l*res.w + x] = texel;
 				}
@@ -299,6 +325,12 @@ void R_DrawTriangles(vertex_t* verts, int count, color_t color)
 					// 	((uint32_t)(color3.g*255.0f)<<8) |
 					// 	((uint32_t)(color3.b*255.0f)<<16);
 
+					vec3_t t = BarycentricCoords(vec2(x, l), v0.pos.xy, v1.pos.xy, v2.pos.xy);
+					uint32_t triColorViz =
+						((uint32_t)(t.r*255.0f)<<0) |
+						((uint32_t)(t.g*255.0f)<<8) |
+						((uint32_t)(t.b*255.0f)<<16);
+
 					vertex_t v = LerpTriVetices(vec2(x, l), v0, v1, v2);
 
 					uint32_t color =
@@ -309,6 +341,10 @@ void R_DrawTriangles(vertex_t* verts, int count, color_t color)
 					int tx = (float)__rActiveTexture->width * v.texcoord.x;
 					int ty = (float)__rActiveTexture->height * v.texcoord.y;
 					uint32_t texel = __rActiveTexture->texels[ty*__rActiveTexture->width+tx];
+
+					uint32_t texCoordViz =
+						((uint32_t)((float)tx*8)<<0) |
+						((uint32_t)((float)ty*8)<<8);
 
 					framebuffer[l*res.w + x] = texel;
 				}
@@ -326,6 +362,11 @@ void R_DrawTriangles(vertex_t* verts, int count, color_t color)
 
 void RenderTestScene()
 {
+	static double prevTime;
+	double time = time_get_ms();
+	float delta = clamp((time - prevTime) / 1000.0f, 0, 0.5f);
+	prevTime = time;
+
 	static texture_t texture;
 	if (!__rActiveTexture) {
 		__rActiveTexture = &texture;
@@ -342,7 +383,7 @@ void RenderTestScene()
 
 				// texture.texels[y*32+x] = 255*(y&1) | (255<<8)*(!(y&1)) | (255<<16)*(x&4);
 
-				texture.texels[y*32+x] = Color32((float)(32-x)/32, (float)(x)/32, (float)(y)/32, 0);
+				texture.texels[y*32+x] = Color32((float)(31-x)/32, (float)(x)/32, (float)(y)/32, 0);
 			}
 		}
 	}
@@ -366,7 +407,7 @@ void RenderTestScene()
 	// }
 
 	static float x = 0.0f;
-	x += 0.01f;
+	x += delta * 1.0f;
 	R_SetTranslation(vec3(160, 120, 0));
 	R_DrawLine(cosf(x)*100, sinf(x)*100, cosf(x)*-100, sinf(x)*-100, 0x0000FF);
 	R_SetTranslation(vec3(0, 0, 0));
