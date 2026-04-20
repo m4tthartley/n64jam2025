@@ -10,7 +10,7 @@ include $(T3D_INST)/t3d.mk
 
 N64_CFLAGS += -std=gnu2x -Os
 
-src = main.c
+src = sys_n64.c
 
 all: n64jam2025.z64
 

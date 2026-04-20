@@ -8,31 +8,14 @@
 #include <core/math.h>
 #include <core/time.h>
 
+#include "r_render.h"
+#include "r_clip.c"
 
-typedef uint32_t color_t;
-
-typedef struct {
-	int16_t x, y;
-	int16_t w, h;
-} vidrect_t;
-
-// 3+3+2+3 = 11*4 = 44
-// 3*4 + 3*2 + 2 + 4 = 24
-typedef struct {
-	vec3_t pos;
-	vec3_t normal;
-	vec2_t texcoord;
-	vec3_t color;
-} vertex_t;
-
-typedef struct {
-	color_t* texels;
-	int width, height;
-} texture_t;
 
 uint32_t* framebuffer;
 vec3_t __rTranslation = {0};
 vec3_t __rRotation = {0};
+vec3_t __rScale = {1, 1, 1};
 texture_t* __rActiveTexture = NULL;
 
 uint32_t Color32(float r, float g, float b, float a)
@@ -53,6 +36,11 @@ void R_SetTranslation(vec3_t translation)
 void R_SetRotation(vec3_t rotation)
 {
 	__rRotation = rotation;
+}
+
+void R_SetScale(vec3_t scale)
+{
+	__rScale = scale;
 }
 
 void R_Clear()
@@ -192,171 +180,256 @@ vertex_t LerpTriVetices(vec2_t coord, vertex_t v0, vertex_t v1, vertex_t v2)
 	return v;
 }
 
+vec3_t ClipSpaceToFramebufferSpace(vec3_t v)
+{
+	vidrect_t res = {0, 0, 320, 240};
+
+	v = mul3(v, vec3f(0.5f));
+	vec3_t result = {
+		(v.x + 1.0f) * 160.0f,
+		(v.y + 1.0f) * 120.0f,
+		v.z,
+	};
+
+	return result;
+}
+
+/*
+	The Rasterize functions take NDCs
+*/
+void R_RasterizePoint(vec3_t pos, color_t color)
+{
+	vidrect_t res = {0, 0, 320, 240};
+
+	vec3_t coords = ClipSpaceToFramebufferSpace(pos);
+	int x = coords.x;
+	int y = coords.y;
+
+	if (x >= res.x && x < res.w && y >= res.y && y < res.h) {
+		R_BlitPixel(coords.x, coords.y, color);
+	}
+}
+
+void R_RasterizeLine(vec3_t start, vec3_t end, color_t color)
+{
+	vidrect_t res = {0, 0, 320, 240};
+
+	vec3_t v0 = ClipSpaceToFramebufferSpace(start);
+	vec3_t v1 = ClipSpaceToFramebufferSpace(end);
+	// int x0 = coords0.x;
+	// int y0 = coords0.y;
+	// int x1 = coords1.x;
+	// int y1 = coords1.y;
+
+	// if (x >= res.x && x < res.w && y >= res.y && y < res.h) {
+		R_DrawLine(v0.x, v0.y, v1.x, v1.y, color);
+	// }
+}
+
+void R_RasterizeTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
+{
+	vidrect_t res = {0, 0, 320, 240};
+
+	v0.pos = ClipSpaceToFramebufferSpace(v0.pos);
+	v1.pos = ClipSpaceToFramebufferSpace(v1.pos);
+	v2.pos = ClipSpaceToFramebufferSpace(v2.pos);
+
+	// Order vertices along y lowest to highest
+	if (v1.pos.y < v0.pos.y) SWAP(v0, v1);
+	if (v2.pos.y < v1.pos.y) SWAP(v1, v2);
+	if (v1.pos.y < v0.pos.y) SWAP(v0, v1);
+
+	// First half
+	int line = 0;
+	float lineStart = v0.pos.x;
+	float lineEnd = v0.pos.x;
+	vec2_t longEdgePoint = {v0.pos.x + ((v1.pos.y-v0.pos.y) / (v2.pos.y-v0.pos.y) * (v2.pos.x-v0.pos.x)), v1.pos.y};
+	vec2_t startPoint = longEdgePoint;
+	vec2_t endPoint = v1.pos.xy;
+	if (endPoint.x < startPoint.x) {
+		SWAP(startPoint, endPoint);
+	}
+	float startStep = (startPoint.x-v0.pos.x) / (startPoint.y-v0.pos.y);
+	float endStep = (endPoint.x-v0.pos.x) / (endPoint.y-v0.pos.y);
+	
+	// ++lineEnd.x;
+	int lineCount = v1.pos.y-v0.pos.y;
+	if ((int)v0.pos.y != (int)v1.pos.y) {
+		for (int l=v0.pos.y; l<=v1.pos.y; ++l) {
+			float start = lineStart;
+			float end = lineEnd;
+			// if (startPoint.x > v0.x) {
+			// 	start = min(lineStart, startPoint.x);
+			// } else {
+			// 	start = max(lineStart, startPoint.x);
+			// }
+			// if (endPoint.x > v0.x) {
+			// 	end = min(lineEnd, endPoint.x);
+			// } else {
+			// 	end = max(lineEnd, endPoint.x);
+			// }
+			for (int x=start; x<=end; ++x) {
+				if (startPoint.x < v0.pos.x && x < startPoint.x) {
+					continue;
+				}
+				if (endPoint.x > v0.pos.x && x > endPoint.x) {
+					continue;
+				}
+
+				// vec3_t triCoords = BarycentricCoords(vec2(x, l), v0.pos.xy, v1.pos.xy, v2.pos.xy);
+				// vec3_t color3 = {
+				// 	v0.color.r*triCoords.f[0] + v1.color.r*triCoords.f[1] + v2.color.r*triCoords.f[2],
+				// 	v0.color.g*triCoords.f[0] + v1.color.g*triCoords.f[1] + v2.color.g*triCoords.f[2],
+				// 	v0.color.b*triCoords.f[0] + v1.color.b*triCoords.f[1] + v2.color.b*triCoords.f[2],
+				// };
+
+				vec3_t t = BarycentricCoords(vec2(x, l), v0.pos.xy, v1.pos.xy, v2.pos.xy);
+
+				// if (t.x <= 0 || t.y <= 0 || t.z <= 0) {
+				// 	continue;
+				// }
+
+				vertex_t v = LerpTriVetices(vec2(x, l), v0, v1, v2);
+
+				uint32_t triColorViz =
+					((uint32_t)(t.r*255.0f)<<0) |
+					((uint32_t)(t.g*255.0f)<<8) |
+					((uint32_t)(t.b*255.0f)<<16);
+
+				uint32_t color =
+					((uint32_t)(v.color.r*255.0f)<<0) |
+					((uint32_t)(v.color.g*255.0f)<<8) |
+					((uint32_t)(v.color.b*255.0f)<<16);
+
+				int tx = (float)__rActiveTexture->width * v.texcoord.x;
+				int ty = (float)__rActiveTexture->height * v.texcoord.y;
+				uint32_t texel = __rActiveTexture->texels[ty*__rActiveTexture->width+tx];
+
+				uint32_t texCoordViz =
+					((uint32_t)((float)tx*8)<<0) |
+					((uint32_t)((float)ty*8)<<8);
+
+				framebuffer[l*res.w + x] = texel;
+			}
+
+			lineStart += startStep;
+			lineEnd += endStep;
+		}
+	}
+
+	// Second half
+	lineStart = longEdgePoint.x;
+	lineEnd = v1.pos.x;
+	startStep = (v2.pos.x-longEdgePoint.x) / (v2.pos.y-longEdgePoint.y);
+	endStep = (v2.pos.x-v1.pos.x) / (v2.pos.y-v1.pos.y);
+	if (v1.pos.x < longEdgePoint.x) {
+		SWAP(lineStart, lineEnd);
+		SWAP(startStep, endStep);
+	}
+
+	// if ((int)v2.y != (int)v1.y) {
+		for (int l=v1.pos.y; l<=v2.pos.y; ++l) {
+			for (int x=lineStart; x<=lineEnd; ++x) {
+
+				// vec3_t triCoords = BarycentricCoords(vec2(x, l), v0.pos.xy, v1.pos.xy, v2.pos.xy);
+				// vec3_t color3 = {
+				// 	v0.color.r*triCoords.f[0] + v1.color.r*triCoords.f[1] + v2.color.r*triCoords.f[2],
+				// 	v0.color.g*triCoords.f[0] + v1.color.g*triCoords.f[1] + v2.color.g*triCoords.f[2],
+				// 	v0.color.b*triCoords.f[0] + v1.color.b*triCoords.f[1] + v2.color.b*triCoords.f[2],
+				// };
+
+				// uint32_t color =
+				// 	((uint32_t)(color3.r*255.0f)<<0) |
+				// 	((uint32_t)(color3.g*255.0f)<<8) |
+				// 	((uint32_t)(color3.b*255.0f)<<16);
+
+				vec3_t t = BarycentricCoords(vec2(x, l), v0.pos.xy, v1.pos.xy, v2.pos.xy);
+				uint32_t triColorViz =
+					((uint32_t)(t.r*255.0f)<<0) |
+					((uint32_t)(t.g*255.0f)<<8) |
+					((uint32_t)(t.b*255.0f)<<16);
+
+				vertex_t v = LerpTriVetices(vec2(x, l), v0, v1, v2);
+
+				uint32_t color =
+					((uint32_t)(v.color.r*255.0f)<<0) |
+					((uint32_t)(v.color.g*255.0f)<<8) |
+					((uint32_t)(v.color.b*255.0f)<<16);
+
+				int tx = (float)__rActiveTexture->width * v.texcoord.x;
+				int ty = (float)__rActiveTexture->height * v.texcoord.y;
+				uint32_t texel = __rActiveTexture->texels[ty*__rActiveTexture->width+tx];
+
+				uint32_t texCoordViz =
+					((uint32_t)((float)tx*8)<<0) |
+					((uint32_t)((float)ty*8)<<8);
+
+				framebuffer[l*res.w + x] = texel;
+			}
+
+			lineStart += startStep;
+			lineEnd += endStep;
+		}
+	// }
+}
+
+void R_DrawTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
+{
+	v0.pos = R_RotateVector(v0.pos, __rRotation);
+	v1.pos = R_RotateVector(v1.pos, __rRotation);
+	v2.pos = R_RotateVector(v2.pos, __rRotation);
+	// vertex_t* v = verts + i;
+
+	v0.pos = mul3(v0.pos, __rScale);
+	v1.pos = mul3(v1.pos, __rScale);
+	v2.pos = mul3(v2.pos, __rScale);
+	
+	v0.pos.x += __rTranslation.x;
+	v0.pos.y += __rTranslation.y;
+	v1.pos.x += __rTranslation.x;
+	v1.pos.y += __rTranslation.y;
+	v2.pos.x += __rTranslation.x;
+	v2.pos.y += __rTranslation.y;
+
+	polygon_t poly = {.vertices={v0, v1, v2}, .count=3};
+	poly = R_ClipWithPlane(poly, PLANE_X0);
+	poly = R_ClipWithPlane(poly, PLANE_X1);
+	poly = R_ClipWithPlane(poly, PLANE_Y0);
+	poly = R_ClipWithPlane(poly, PLANE_Y1);
+	poly = R_ClipWithPlane(poly, PLANE_Z0);
+	poly = R_ClipWithPlane(poly, PLANE_Z1);
+
+	for (int vi=0; vi<(poly.count-2); ++vi) {
+		vertex_t t0 = poly.vertices[0];
+		vertex_t t1 = poly.vertices[vi+1];
+		vertex_t t2 = poly.vertices[vi+2];
+
+		// R_RasterizeTriangle(t0, t1, t2, color);
+
+		// R_RasterizePoint(vec3(t0.pos.x, t0.pos.y, 0), 0xFFFFFF);
+		// R_RasterizePoint(vec3(t1.pos.x, t1.pos.y, 0), 0xFFFFFF);
+		// R_RasterizePoint(vec3(t2.pos.x, t2.pos.y, 0), 0xFFFFFF);
+
+		R_RasterizeLine(t0.pos, t1.pos, color);
+		R_RasterizeLine(t1.pos, t2.pos, color);
+		R_RasterizeLine(t0.pos, t2.pos, color);
+	}
+
+	// R_RasterizeTriangle(v0, v1, v2, color);
+}
+
 void R_DrawTriangles(vertex_t* verts, int count, color_t color)
 {
 	assert(count % 3 == 0);
 
 	// R_DrawLineTriangles(verts, count, 0xFFFFFF);
 
-	vidrect_t res = {0, 0, 320, 240};
-
 	for (int i=0; i<count; i+=3) {
 		vertex_t v0 = verts[i+0];
 		vertex_t v1 = verts[i+1];
 		vertex_t v2 = verts[i+2];
-		v0.pos = R_RotateVector(v0.pos, __rRotation);
-		v1.pos = R_RotateVector(v1.pos, __rRotation);
-		v2.pos = R_RotateVector(v2.pos, __rRotation);
-		// vertex_t* v = verts + i;
-		
-		v0.pos.x += __rTranslation.x;
-		v0.pos.y += __rTranslation.y;
-		v1.pos.x += __rTranslation.x;
-		v1.pos.y += __rTranslation.y;
-		v2.pos.x += __rTranslation.x;
-		v2.pos.y += __rTranslation.y;
 
-		// Order vertices along y lowest to highest
-		if (v1.pos.y < v0.pos.y) SWAP(v0, v1);
-		if (v2.pos.y < v1.pos.y) SWAP(v1, v2);
-		if (v1.pos.y < v0.pos.y) SWAP(v0, v1);
-
-		// First half
-		int line = 0;
-		float lineStart = v0.pos.x;
-		float lineEnd = v0.pos.x;
-		vec2_t longEdgePoint = {v0.pos.x + ((v1.pos.y-v0.pos.y) / (v2.pos.y-v0.pos.y) * (v2.pos.x-v0.pos.x)), v1.pos.y};
-		vec2_t startPoint = longEdgePoint;
-		vec2_t endPoint = v1.pos.xy;
-		if (endPoint.x < startPoint.x) {
-			SWAP(startPoint, endPoint);
-		}
-		float startStep = (startPoint.x-v0.pos.x) / (startPoint.y-v0.pos.y);
-		float endStep = (endPoint.x-v0.pos.x) / (endPoint.y-v0.pos.y);
-		
-		// ++lineEnd.x;
-		int lineCount = v1.pos.y-v0.pos.y;
-		if ((int)v0.pos.y != (int)v1.pos.y) {
-			for (int l=v0.pos.y; l<=v1.pos.y; ++l) {
-				float start = lineStart;
-				float end = lineEnd;
-				// if (startPoint.x > v0.x) {
-				// 	start = min(lineStart, startPoint.x);
-				// } else {
-				// 	start = max(lineStart, startPoint.x);
-				// }
-				// if (endPoint.x > v0.x) {
-				// 	end = min(lineEnd, endPoint.x);
-				// } else {
-				// 	end = max(lineEnd, endPoint.x);
-				// }
-				for (int x=start; x<=end; ++x) {
-					if (startPoint.x < v0.pos.x && x < startPoint.x) {
-						continue;
-					}
-					if (endPoint.x > v0.pos.x && x > endPoint.x) {
-						continue;
-					}
-
-					// vec3_t triCoords = BarycentricCoords(vec2(x, l), v0.pos.xy, v1.pos.xy, v2.pos.xy);
-					// vec3_t color3 = {
-					// 	v0.color.r*triCoords.f[0] + v1.color.r*triCoords.f[1] + v2.color.r*triCoords.f[2],
-					// 	v0.color.g*triCoords.f[0] + v1.color.g*triCoords.f[1] + v2.color.g*triCoords.f[2],
-					// 	v0.color.b*triCoords.f[0] + v1.color.b*triCoords.f[1] + v2.color.b*triCoords.f[2],
-					// };
-
-					vec3_t t = BarycentricCoords(vec2(x, l), v0.pos.xy, v1.pos.xy, v2.pos.xy);
-
-					// if (t.x <= 0 || t.y <= 0 || t.z <= 0) {
-					// 	continue;
-					// }
-
-					vertex_t v = LerpTriVetices(vec2(x, l), v0, v1, v2);
-
-					uint32_t triColorViz =
-						((uint32_t)(t.r*255.0f)<<0) |
-						((uint32_t)(t.g*255.0f)<<8) |
-						((uint32_t)(t.b*255.0f)<<16);
-
-					uint32_t color =
-						((uint32_t)(v.color.r*255.0f)<<0) |
-						((uint32_t)(v.color.g*255.0f)<<8) |
-						((uint32_t)(v.color.b*255.0f)<<16);
-
-					int tx = (float)__rActiveTexture->width * v.texcoord.x;
-					int ty = (float)__rActiveTexture->height * v.texcoord.y;
-					uint32_t texel = __rActiveTexture->texels[ty*__rActiveTexture->width+tx];
-
-					uint32_t texCoordViz =
-						((uint32_t)((float)tx*8)<<0) |
-						((uint32_t)((float)ty*8)<<8);
-
-					framebuffer[l*res.w + x] = texel;
-				}
-
-				lineStart += startStep;
-				lineEnd += endStep;
-			}
-		}
-
-		// Second half
-		lineStart = longEdgePoint.x;
-		lineEnd = v1.pos.x;
-		startStep = (v2.pos.x-longEdgePoint.x) / (v2.pos.y-longEdgePoint.y);
-		endStep = (v2.pos.x-v1.pos.x) / (v2.pos.y-v1.pos.y);
-		if (v1.pos.x < longEdgePoint.x) {
-			SWAP(lineStart, lineEnd);
-			SWAP(startStep, endStep);
-		}
-
-		// if ((int)v2.y != (int)v1.y) {
-			for (int l=v1.pos.y; l<=v2.pos.y; ++l) {
-				for (int x=lineStart; x<=lineEnd; ++x) {
-
-					// vec3_t triCoords = BarycentricCoords(vec2(x, l), v0.pos.xy, v1.pos.xy, v2.pos.xy);
-					// vec3_t color3 = {
-					// 	v0.color.r*triCoords.f[0] + v1.color.r*triCoords.f[1] + v2.color.r*triCoords.f[2],
-					// 	v0.color.g*triCoords.f[0] + v1.color.g*triCoords.f[1] + v2.color.g*triCoords.f[2],
-					// 	v0.color.b*triCoords.f[0] + v1.color.b*triCoords.f[1] + v2.color.b*triCoords.f[2],
-					// };
-
-					// uint32_t color =
-					// 	((uint32_t)(color3.r*255.0f)<<0) |
-					// 	((uint32_t)(color3.g*255.0f)<<8) |
-					// 	((uint32_t)(color3.b*255.0f)<<16);
-
-					vec3_t t = BarycentricCoords(vec2(x, l), v0.pos.xy, v1.pos.xy, v2.pos.xy);
-					uint32_t triColorViz =
-						((uint32_t)(t.r*255.0f)<<0) |
-						((uint32_t)(t.g*255.0f)<<8) |
-						((uint32_t)(t.b*255.0f)<<16);
-
-					vertex_t v = LerpTriVetices(vec2(x, l), v0, v1, v2);
-
-					uint32_t color =
-						((uint32_t)(v.color.r*255.0f)<<0) |
-						((uint32_t)(v.color.g*255.0f)<<8) |
-						((uint32_t)(v.color.b*255.0f)<<16);
-
-					int tx = (float)__rActiveTexture->width * v.texcoord.x;
-					int ty = (float)__rActiveTexture->height * v.texcoord.y;
-					uint32_t texel = __rActiveTexture->texels[ty*__rActiveTexture->width+tx];
-
-					uint32_t texCoordViz =
-						((uint32_t)((float)tx*8)<<0) |
-						((uint32_t)((float)ty*8)<<8);
-
-					framebuffer[l*res.w + x] = texel;
-				}
-
-				lineStart += startStep;
-				lineEnd += endStep;
-			}
-		// }
-
-		R_BlitPixel(v0.pos.x, v0.pos.y, 0xFFFFFF);
-		R_BlitPixel(v1.pos.x, v1.pos.y, 0xFFFFFF);
-		R_BlitPixel(v2.pos.x, v2.pos.y, 0xFFFFFF);
+		R_DrawTriangle(v0, v1, v2, color);
 	}
 }
 
@@ -430,13 +503,16 @@ void RenderTestScene()
 		// verts[i].pos.y += 20;
 	}
 
-	R_SetTranslation(vec3(50, 50, 0));
-	R_DrawLineTriangles(verts, 6, 0x00FF00);
+	R_SetTranslation(vec3(30, 30, 0));
+	R_DrawLineTriangles(verts, 6, 0x00FFFF);
 
 	vertex_t verts2[] = {
-		{vec3(-28.0f, -20.0f, 0), .texcoord=vec2(0, 0), .color=vec3(1, 0, 0)},
-		{vec3(+48.0f, +0.0f, 0), .texcoord=vec2(1, 0), .color=vec3(0, 1, 0)},
-		{vec3(+12.0f, +28.0f, 0), .texcoord=vec2(1, 1), .color=vec3(0, 0, 1)},
+		// {vec3(-28.0f, -20.0f, 0), .texcoord=vec2(0, 0), .color=vec3(1, 0, 0)},
+		// {vec3(+48.0f, +0.0f, 0), .texcoord=vec2(1, 0), .color=vec3(0, 1, 0)},
+		// {vec3(+12.0f, +28.0f, 0), .texcoord=vec2(1, 1), .color=vec3(0, 0, 1)},
+		{vec3(-0.5f, -0.5f, 0), .texcoord=vec2(0, 0), .color=vec3(1, 0, 0)},
+		{vec3(+0.5f, -0.5f, 0), .texcoord=vec2(1, 0), .color=vec3(0, 1, 0)},
+		{vec3(+0.0f, +0.5f, 0), .texcoord=vec2(1, 1), .color=vec3(0, 0, 1)},
 	};
 	// vertex_t verts2[] = {
 	// 	{vec3(-28.0f, -5.0f, 0)},
@@ -444,7 +520,10 @@ void RenderTestScene()
 	// 	{vec3(+12.0f, +2.0f, 0)},
 	// };
 
-	R_SetTranslation(vec3(160, 120, 0));
+	R_SetTranslation(vec3(0.5f, 0.0f, 0));
 	R_SetRotation(vec3(0, 0, x));
+	R_SetScale(vec3f(2.0f));
 	R_DrawTriangles(verts2, 3, 0xFF8888);
+
+	// R_BlitPixel(160, 120, Color32(1, 0, 1, 1));
 }

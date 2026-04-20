@@ -11,11 +11,11 @@ running=$(pgrep game)
 
 if [ -z $running ]; then
 	echo "Building executable..."
-	clang coretest.c -g $(coreconfig) -lX11 -lGL -o ./build/game
+	clang sys_pc.c -g $(coreconfig) -lX11 -lGL -o ./build/game
 else
 	echo "Game is currently running"
 fi
 
 echo "Building game library..."
-clang coretest.c -g $(coreconfig) -lX11 -lGL -o ./build/game.tmp.so -shared -fPIC
+clang sys_pc.c -g $(coreconfig) -lX11 -lGL -o ./build/game.tmp.so -shared -fPIC
 mv ./build/game.tmp.so ./build/game.so
