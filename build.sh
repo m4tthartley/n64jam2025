@@ -9,6 +9,8 @@
 
 running=$(pgrep game)
 
+set -e
+
 if [ -z $running ]; then
 	echo "Building executable..."
 	clang sys_pc.c -g $(coreconfig) -lX11 -lGL -o ./build/game

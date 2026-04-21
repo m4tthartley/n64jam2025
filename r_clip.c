@@ -9,10 +9,11 @@
 
 
 typedef vec3_t plane_t;
-plane_t PLANE_X0 = {+1, 0, 0};
-plane_t PLANE_X1 = {-1, 0, 0};
-plane_t PLANE_Y0 = {0, +1, 0};
-plane_t PLANE_Y1 = {0, -1, 0};
+#define CLIP_SPACE_SCALE 1.0f
+plane_t PLANE_X0 = {+(1.0f/CLIP_SPACE_SCALE), 0, 0};
+plane_t PLANE_X1 = {-(1.0f/CLIP_SPACE_SCALE), 0, 0};
+plane_t PLANE_Y0 = {0, +(1.0f/CLIP_SPACE_SCALE), 0};
+plane_t PLANE_Y1 = {0, -(1.0f/CLIP_SPACE_SCALE), 0};
 plane_t PLANE_Z0 = {0, 0, +1};
 plane_t PLANE_Z1 = {0, 0, -1};
 
@@ -27,7 +28,7 @@ vertex_t LerpVertex(vertex_t a, vertex_t b, float t)
 	v.pos.x = a.pos.x + t*(b.pos.x-a.pos.x);
 	v.pos.y = a.pos.y + t*(b.pos.y-a.pos.y);
 	v.pos.z = a.pos.z + t*(b.pos.z-a.pos.z);
-	// v.pos.w = a.pos.w + t*(b.pos.w-a.pos.w);
+	v.pos.w = a.pos.w + t*(b.pos.w-a.pos.w);
 
 	v.normal.x = a.normal.x + t*(b.normal.x-a.normal.x);
 	v.normal.y = a.normal.y + t*(b.normal.y-a.normal.y);
@@ -87,8 +88,8 @@ polygon_t R_ClipWithPlane(polygon_t polygon, plane_t plane)
 		vertex_t v0 = polygon.vertices[vi];
 		vertex_t v1 = polygon.vertices[(vi+1)%polygon.count];
 
-		float d0 = _ClipPlaneDist(vec4f3(v0.pos, 1), plane);
-		float d1 = _ClipPlaneDist(vec4f3(v1.pos, 1), plane);
+		float d0 = _ClipPlaneDist(v0.pos, plane);
+		float d1 = _ClipPlaneDist(v1.pos, plane);
 
 		bool inclip0 = d0 >= 0;
 		bool inclip1 = d1 >= 0;

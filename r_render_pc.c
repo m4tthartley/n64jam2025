@@ -86,7 +86,7 @@ void R_DrawLine(float v0x, float v0y, float v1x, float v1y, color_t color)
 	}
 }
 
-void R_DrawLineTriangles(vertex_t* verts, int count, color_t color)
+void R_DrawLineTriangles(mvertex_t* verts, int count, color_t color)
 {
 	assert(count % 3 == 0);
 
@@ -102,7 +102,7 @@ void R_DrawLineTriangles(vertex_t* verts, int count, color_t color)
 	}
 }
 
-vec3_t R_RotateVector(vec3_t v, vec3_t rotation)
+vec3_t R_RotateVector3(vec3_t v, vec3_t rotation)
 {
 	// NOTE: Just Z rotation right now
 	float zCos = cosf(rotation.z);
@@ -161,7 +161,7 @@ vertex_t LerpTriVetices(vec2_t coord, vertex_t v0, vertex_t v1, vertex_t v2)
 {
 	vec3_t t = BarycentricCoords(vec2(coord.x, coord.y), v0.pos.xy, v1.pos.xy, v2.pos.xy);
 	vertex_t v;
-	v.pos = vec3f2(coord, 0);
+	v.pos = vec4f2(coord, 0, 1);
 
 	vec3_t color3 = {
 		v0.color.r*t.x + v1.color.r*t.y + v2.color.r*t.z,
@@ -180,15 +180,16 @@ vertex_t LerpTriVetices(vec2_t coord, vertex_t v0, vertex_t v1, vertex_t v2)
 	return v;
 }
 
-vec3_t ClipSpaceToFramebufferSpace(vec3_t v)
+vec4_t ClipSpaceToFramebufferSpace(vec4_t v)
 {
 	vidrect_t res = {0, 0, 320, 240};
 
-	v = mul3(v, vec3f(0.5f));
-	vec3_t result = {
+	// v = mul3(v, vec3f(0.5f));
+	vec4_t result = {
 		(v.x + 1.0f) * 160.0f,
 		(v.y + 1.0f) * 120.0f,
 		v.z,
+		v.w,
 	};
 
 	return result;
@@ -197,11 +198,11 @@ vec3_t ClipSpaceToFramebufferSpace(vec3_t v)
 /*
 	The Rasterize functions take NDCs
 */
-void R_RasterizePoint(vec3_t pos, color_t color)
+void R_RasterizePoint(vec4_t pos, color_t color)
 {
 	vidrect_t res = {0, 0, 320, 240};
 
-	vec3_t coords = ClipSpaceToFramebufferSpace(pos);
+	vec4_t coords = ClipSpaceToFramebufferSpace(pos);
 	int x = coords.x;
 	int y = coords.y;
 
@@ -210,12 +211,12 @@ void R_RasterizePoint(vec3_t pos, color_t color)
 	}
 }
 
-void R_RasterizeLine(vec3_t start, vec3_t end, color_t color)
+void R_RasterizeLine(vec4_t start, vec4_t end, color_t color)
 {
 	vidrect_t res = {0, 0, 320, 240};
 
-	vec3_t v0 = ClipSpaceToFramebufferSpace(start);
-	vec3_t v1 = ClipSpaceToFramebufferSpace(end);
+	vec4_t v0 = ClipSpaceToFramebufferSpace(start);
+	vec4_t v1 = ClipSpaceToFramebufferSpace(end);
 	// int x0 = coords0.x;
 	// int y0 = coords0.y;
 	// int x1 = coords1.x;
@@ -373,23 +374,34 @@ void R_RasterizeTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
 	// }
 }
 
-void R_DrawTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
+void R_DrawTriangle(mvertex_t in0, mvertex_t in1, mvertex_t in2, color_t color)
 {
-	v0.pos = R_RotateVector(v0.pos, __rRotation);
-	v1.pos = R_RotateVector(v1.pos, __rRotation);
-	v2.pos = R_RotateVector(v2.pos, __rRotation);
+	// vertex_t v0 = MVertexToVertex(in0);
+	// vertex_t v1 = MVertexToVertex(in1);
+	// vertex_t v2 = MVertexToVertex(in2);
+
+	in0.pos = R_RotateVector3(in0.pos, __rRotation);
+	in1.pos = R_RotateVector3(in1.pos, __rRotation);
+	in2.pos = R_RotateVector3(in2.pos, __rRotation);
 	// vertex_t* v = verts + i;
 
-	v0.pos = mul3(v0.pos, __rScale);
-	v1.pos = mul3(v1.pos, __rScale);
-	v2.pos = mul3(v2.pos, __rScale);
+	in0.pos = mul3(in0.pos, __rScale);
+	in1.pos = mul3(in1.pos, __rScale);
+	in2.pos = mul3(in2.pos, __rScale);
 	
-	v0.pos.x += __rTranslation.x;
-	v0.pos.y += __rTranslation.y;
-	v1.pos.x += __rTranslation.x;
-	v1.pos.y += __rTranslation.y;
-	v2.pos.x += __rTranslation.x;
-	v2.pos.y += __rTranslation.y;
+	in0.pos.x += __rTranslation.x;
+	in0.pos.y += __rTranslation.y;
+	in1.pos.x += __rTranslation.x;
+	in1.pos.y += __rTranslation.y;
+	in2.pos.x += __rTranslation.x;
+	in2.pos.y += __rTranslation.y;
+
+	// v0.pos.w = 1.0f;
+	// v1.pos.w = 1.0f;
+	// v2.pos.w = 1.0f;
+	vertex_t v0 = MVertexToVertex(in0);
+	vertex_t v1 = MVertexToVertex(in1);
+	vertex_t v2 = MVertexToVertex(in2);
 
 	polygon_t poly = {.vertices={v0, v1, v2}, .count=3};
 	poly = R_ClipWithPlane(poly, PLANE_X0);
@@ -404,7 +416,7 @@ void R_DrawTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
 		vertex_t t1 = poly.vertices[vi+1];
 		vertex_t t2 = poly.vertices[vi+2];
 
-		// R_RasterizeTriangle(t0, t1, t2, color);
+		R_RasterizeTriangle(t0, t1, t2, color);
 
 		// R_RasterizePoint(vec3(t0.pos.x, t0.pos.y, 0), 0xFFFFFF);
 		// R_RasterizePoint(vec3(t1.pos.x, t1.pos.y, 0), 0xFFFFFF);
@@ -418,16 +430,16 @@ void R_DrawTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
 	// R_RasterizeTriangle(v0, v1, v2, color);
 }
 
-void R_DrawTriangles(vertex_t* verts, int count, color_t color)
+void R_DrawTriangles(mvertex_t* verts, int count, color_t color)
 {
 	assert(count % 3 == 0);
 
 	// R_DrawLineTriangles(verts, count, 0xFFFFFF);
 
 	for (int i=0; i<count; i+=3) {
-		vertex_t v0 = verts[i+0];
-		vertex_t v1 = verts[i+1];
-		vertex_t v2 = verts[i+2];
+		mvertex_t v0 = verts[i+0];
+		mvertex_t v1 = verts[i+1];
+		mvertex_t v2 = verts[i+2];
 
 		R_DrawTriangle(v0, v1, v2, color);
 	}
@@ -486,7 +498,7 @@ void RenderTestScene()
 	R_SetTranslation(vec3(0, 0, 0));
 	R_DrawLine(120, 80, 220, 150, 0xFF0000);
 
-	vertex_t verts[] = {
+	mvertex_t verts[] = {
 		{vec3(-10.0f, -10.0f, 0)},
 		{vec3(10.0f, 0.0f, 0)},
 		{vec3(0.0f, 10.0f, 0)},
@@ -506,7 +518,7 @@ void RenderTestScene()
 	R_SetTranslation(vec3(30, 30, 0));
 	R_DrawLineTriangles(verts, 6, 0x00FFFF);
 
-	vertex_t verts2[] = {
+	mvertex_t verts2[] = {
 		// {vec3(-28.0f, -20.0f, 0), .texcoord=vec2(0, 0), .color=vec3(1, 0, 0)},
 		// {vec3(+48.0f, +0.0f, 0), .texcoord=vec2(1, 0), .color=vec3(0, 1, 0)},
 		// {vec3(+12.0f, +28.0f, 0), .texcoord=vec2(1, 1), .color=vec3(0, 0, 1)},
