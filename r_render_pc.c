@@ -7,7 +7,9 @@
 #include <core/core.h>
 #include <core/math.h>
 #include <core/time.h>
+#include <core/bmp.h>
 
+#include "sys_pc.h"
 #include "r_render.h"
 #include "r_clip.c"
 
@@ -310,6 +312,10 @@ void R_RasterizeTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
 					((uint32_t)((float)tx*8)<<0) |
 					((uint32_t)((float)ty*8)<<8);
 
+				if (l < 0 || l >= res.h || x < 0 || x >= res.w) {
+					continue; // TODO: Shouldn't be needed
+				}
+
 				framebuffer[l*res.w + x] = texel;
 			}
 
@@ -364,6 +370,10 @@ void R_RasterizeTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
 				uint32_t texCoordViz =
 					((uint32_t)((float)tx*8)<<0) |
 					((uint32_t)((float)ty*8)<<8);
+
+				if (l < 0 || l >= res.h || x < 0 || x >= res.w) {
+					continue; // TODO: Shouldn't be needed
+				}
 
 				framebuffer[l*res.w + x] = texel;
 			}
@@ -445,6 +455,21 @@ void R_DrawTriangles(mvertex_t* verts, int count, color_t color)
 	}
 }
 
+texture_t testTexture;
+
+void R_Init()
+{
+	state_t* state = GetState();
+
+	file_data_t* file = Sys_LoadFile(&state->assetArena, "assets/metal2.bmp");
+
+	bmp_info_t info = bmp_get_info(file->data);
+	testTexture.texels = alloc_memory(&state->assetArena, info.width*info.height*sizeof(color_t));
+	testTexture.width = info.width;
+	testTexture.height = info.height;
+	bmp_load_rgba32(file->data, testTexture.texels);
+}
+
 void RenderTestScene()
 {
 	static double prevTime;
@@ -452,32 +477,38 @@ void RenderTestScene()
 	float delta = clamp((time - prevTime) / 1000.0f, 0, 0.5f);
 	prevTime = time;
 
-	static texture_t texture;
-	if (!__rActiveTexture) {
-		__rActiveTexture = &texture;
-		texture.width = 32;
-		texture.height = 32;
-		texture.texels = sys_alloc_memory(texture.width*texture.height*sizeof(color_t));
-		// for (int i=0; i<texture.width*texture.height; ++i) {
-		// 	texture.texels[i] = rand() & 0xFF;
-		// }
-		for (int y=0; y<32; ++y) {
-			for (int x=0; x<32; ++x) {
-				// float r = rand() & 0xFF;
-				// texture.texels[y*32+x] = (int)(r*((float)y/32)) | (int)(r*(1.0f-(float)y/32))<<8;
+	// static texture_t texture;
+	// if (!__rActiveTexture) {
+	// 	__rActiveTexture = &texture;
+	// 	texture.width = 32;
+	// 	texture.height = 32;
+	// 	texture.texels = sys_alloc_memory(texture.width*texture.height*sizeof(color_t));
+	// 	// for (int i=0; i<texture.width*texture.height; ++i) {
+	// 	// 	texture.texels[i] = rand() & 0xFF;
+	// 	// }
+	// 	for (int y=0; y<32; ++y) {
+	// 		for (int x=0; x<32; ++x) {
+	// 			// float r = rand() & 0xFF;
+	// 			// texture.texels[y*32+x] = (int)(r*((float)y/32)) | (int)(r*(1.0f-(float)y/32))<<8;
 
-				// texture.texels[y*32+x] = 255*(y&1) | (255<<8)*(!(y&1)) | (255<<16)*(x&4);
+	// 			// texture.texels[y*32+x] = 255*(y&1) | (255<<8)*(!(y&1)) | (255<<16)*(x&4);
 
-				texture.texels[y*32+x] = Color32((float)(31-x)/32, (float)(x)/32, (float)(y)/32, 0);
-			}
-		}
+	// 			texture.texels[y*32+x] = Color32((float)(31-x)/32, (float)(x)/32, (float)(y)/32, 0);
+	// 		}
+	// 	}
+	// }
+
+	if (!testTexture.texels) {
+		R_Init();
 	}
+
+	__rActiveTexture = &testTexture;
 
 	R_Clear();
 
 	for (int y=0; y<32; ++y) {
 		for (int x=0; x<32; ++x) {
-			framebuffer[(240-10-y) * 320 + (10+x)] = texture.texels[y*32+x];
+			framebuffer[(240-10-y) * 320 + (10+x)] = testTexture.texels[y*32+x];
 		}
 	}
 
@@ -524,7 +555,7 @@ void RenderTestScene()
 		// {vec3(+12.0f, +28.0f, 0), .texcoord=vec2(1, 1), .color=vec3(0, 0, 1)},
 		{vec3(-0.5f, -0.5f, 0), .texcoord=vec2(0, 0), .color=vec3(1, 0, 0)},
 		{vec3(+0.5f, -0.5f, 0), .texcoord=vec2(1, 0), .color=vec3(0, 1, 0)},
-		{vec3(+0.0f, +0.5f, 0), .texcoord=vec2(1, 1), .color=vec3(0, 0, 1)},
+		{vec3(+0.0f, +0.5f, 0), .texcoord=vec2(1, 1), .color=vec3(1, 0, 1)},
 	};
 	// vertex_t verts2[] = {
 	// 	{vec3(-28.0f, -5.0f, 0)},
@@ -538,4 +569,12 @@ void RenderTestScene()
 	R_DrawTriangles(verts2, 3, 0xFF8888);
 
 	// R_BlitPixel(160, 120, Color32(1, 0, 1, 1));
+}
+
+void Render3DTestScene()
+{
+	static double prevTime;
+	double time = time_get_ms();
+	float delta = clamp((time - prevTime) / 1000.0f, 0, 0.5f);
+	prevTime = time;
 }

@@ -12,14 +12,33 @@
 
 #include "r_render_pc.c"
 
-typedef struct {
-	window_t window;
-	uint32_t* framebuffer;
-	GLuint framebufferTex;
-} state_t;
+
+state_t* __state;
+
+state_t* GetState()
+{
+	return __state;
+}
+
+file_data_t* Sys_LoadFile(allocator_t* allocator, char* path)
+{
+	file_t file = sys_open(path);
+	if (!file) {
+		return NULL;
+	}
+
+	stat_t info = sys_fstat(file);
+	file_data_t* result = alloc_memory(allocator, info.size + sizeof(stat_t));
+	result->stat = info;
+	sys_read(file, 0, result->data, info.size);
+	sys_close(file);
+	return result;
+}
 
 void Init(state_t* state)
 {
+	state->assetArena = virtual_heap_allocator(MB(100), MB(1));
+
 	state->window = vid_init_window("Linux Window", 320*4, 240*4, 0);
 
 	vid_init_opengl(&state->window);
@@ -36,6 +55,7 @@ void Init(state_t* state)
 
 void Update(state_t* state)
 {
+	__state = state;
 	framebuffer = state->framebuffer;
 	window_t* vid = &state->window;
 	vid_poll_events(vid);
@@ -85,15 +105,16 @@ void Update(state_t* state)
 
 int main()
 {
-	state_t* state = sys_alloc_memory(sizeof(state_t));
-	sys_zero_memory(state, sizeof(state_t));
+	__state = sys_alloc_memory(sizeof(state_t));
+	sys_zero_memory(__state, sizeof(state_t));
 
-	Init(state);
+	Init(__state);
 
 	dylib_t lib = sys_load_lib("./build/game.so");
 	uint64_t modifiedTime = sys_stat("./build/game.so").modified;
 
 	void (*UpdateProc)(state_t* state) = sys_load_lib_sym(lib, "Update");
+	state_t** libState = sys_load_lib_sym(lib, "__state");
 
 	for (;;) {
 		uint64_t newModifiedTime = sys_stat("./build/game.so").modified;
@@ -104,7 +125,10 @@ int main()
 			sys_close_lib(lib);
 			lib = sys_load_lib("./build/game.so");
 			UpdateProc = sys_load_lib_sym(lib, "Update");
+
+			libState = sys_load_lib_sym(lib, "__state");
+			*libState = __state;
 		}
-		UpdateProc(state);
+		UpdateProc(__state);
 	}
 }
