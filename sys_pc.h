@@ -14,6 +14,7 @@
 typedef struct {
 	window_t window;
 	uint32_t* framebuffer;
+	float* depthbuffer;
 	GLuint framebufferTex;
 
 	allocator_t assetArena;

@@ -27,6 +27,7 @@ typedef struct {
 } perspective_factors_t;
 
 uint32_t* framebuffer;
+float* depthbuffer;
 vec3_t __rTranslation = {0};
 vec3_t __rRotation = {0};
 vec3_t __rScale = {1, 1, 1};
@@ -125,7 +126,12 @@ vertex_t R_PerspectiveTransform(mvertex_t in)
 
 void R_Clear()
 {
-	sys_zero_memory(framebuffer, 320*240*4);
+	state_t* state = GetState();
+	sys_zero_memory(state->framebuffer, 320*240*4);
+	// sys_zero_memory(state->depthbuffer, 320*240*sizeof(float));
+	for (int idx=0; idx<320*240; ++idx) {
+		depthbuffer[idx] = 100.0f;
+	}
 }
 
 void R_BlitPixel(int x, int y, color_t color)
@@ -391,6 +397,10 @@ void R_RasterizeTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
 			// 	end = max(lineEnd, endPoint.x);
 			// }
 			for (int x=start; x<=end; ++x) {
+				if ((int)v1.pos.y-1 == l) {
+					int asd = 0;
+				}
+
 				if (startPoint.x < v0.pos.x && x < startPoint.x) {
 					continue;
 				}
@@ -412,9 +422,14 @@ void R_RasterizeTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
 				// }
 
 				vertex_t v = LerpTriVetices(vec2(x, l), v0, v1, v2);
+				float w = 1.0f / v.pos.w;
 
-				v.texcoord = mul2(v.texcoord, vec2f(1.0f / v.pos.w));
-				v.color = mul3(v.color, vec3f(1.0f / v.pos.w));
+				if (depthbuffer[l*res.w + x] < w) {
+					continue;
+				}
+
+				v.texcoord = mul2(v.texcoord, vec2f(w));
+				v.color = mul3(v.color, vec3f(w));
 
 				uint32_t triColorViz =
 					((uint32_t)(t.r*255.0f)<<0) |
@@ -439,6 +454,9 @@ void R_RasterizeTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
 				}
 
 				framebuffer[l*res.w + x] = MixColor32(color, texel);
+				// framebuffer[l*res.w + x] = color;
+				// framebuffer[l*res.w + x] = (1.0f / v.pos.w) * 255.0f;
+				depthbuffer[l*res.w + x] = w;
 			}
 
 			lineStart += startStep;
@@ -459,7 +477,6 @@ void R_RasterizeTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
 	// if ((int)v2.y != (int)v1.y) {
 		for (int l=v1.pos.y; l<=v2.pos.y; ++l) {
 			for (int x=lineStart; x<=lineEnd; ++x) {
-
 				// vec3_t triCoords = BarycentricCoords(vec2(x, l), v0.pos.xy, v1.pos.xy, v2.pos.xy);
 				// vec3_t color3 = {
 				// 	v0.color.r*triCoords.f[0] + v1.color.r*triCoords.f[1] + v2.color.r*triCoords.f[2],
@@ -479,6 +496,11 @@ void R_RasterizeTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
 					((uint32_t)(t.b*255.0f)<<16);
 
 				vertex_t v = LerpTriVetices(vec2(x, l), v0, v1, v2);
+				float w = 1.0f / v.pos.w;
+
+				if (depthbuffer[l*res.w + x] < w) {
+					continue;
+				}
 
 				v.texcoord = mul2(v.texcoord, vec2f(1.0f / v.pos.w));
 				v.color = mul3(v.color, vec3f(1.0f / v.pos.w));
@@ -501,6 +523,9 @@ void R_RasterizeTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
 				}
 
 				framebuffer[l*res.w + x] = MixColor32(color, texel);
+				// framebuffer[l*res.w + x] = color;
+				// framebuffer[l*res.w + x] = (1.0f / v.pos.w) * 255.0f;
+				depthbuffer[l*res.w + x] = w;
 			}
 
 			lineStart += startStep;
@@ -512,9 +537,10 @@ void R_RasterizeTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
 	// R_RasterizeLine(v0.pos, v1.pos, color);
 	// R_RasterizeLine(v1.pos, v2.pos, color);
 	// R_RasterizeLine(v0.pos, v2.pos, color);
-	R_DrawLine(v0.pos.x, v0.pos.y, v1.pos.x, v1.pos.y, color);
-	R_DrawLine(v1.pos.x, v1.pos.y, v2.pos.x, v2.pos.y, color);
-	R_DrawLine(v0.pos.x, v0.pos.y, v2.pos.x, v2.pos.y, color);
+
+	// R_DrawLine(v0.pos.x, v0.pos.y, v1.pos.x, v1.pos.y, color);
+	// R_DrawLine(v1.pos.x, v1.pos.y, v2.pos.x, v2.pos.y, color);
+	// R_DrawLine(v0.pos.x, v0.pos.y, v2.pos.x, v2.pos.y, color);
 }
 
 void R_DrawTriangle(mvertex_t in0, mvertex_t in1, mvertex_t in2, color_t color)
@@ -624,6 +650,11 @@ texture_t R_LoadTexture(char* path)
 	result.width = info.width;
 	result.height = info.height;
 	bmp_load_rgba32(file->data, result.texels);
+
+	for (int idx=0; idx<result.width*result.height; ++idx) {
+		vec4_t c = Color32ToFloat(result.texels[idx]);
+		result.texels[idx] = Color32(c.b, c.g, c.r, c.a);
+	}
 
 	free_memory(&state->assetArena, file);
 
@@ -744,7 +775,7 @@ void Render3DTestScene()
 	prevTime = time;
 
 	if (!testTexture.texels) {
-		testTexture = R_LoadTexture("assets/metal2.bmp");
+		testTexture = R_LoadTexture("assets/test.bmp");
 	}
 
 	R_Texture(&testTexture);
@@ -755,27 +786,28 @@ void Render3DTestScene()
 	x += delta * 1.0f;
 
 	mvertex_t verts2[] = {
-		{vec3(-0.5f, -0.5f, +0.5f), .texcoord=vec2(0, 0), .color=vec3(1, 1, 1)},
-		{vec3(+0.5f, -0.5f, +0.5f), .texcoord=vec2(1, 0), .color=vec3(1, 1, 1)},
-		{vec3(+0.5f, +0.5f, +0.5f), .texcoord=vec2(1, 1), .color=vec3(1, 1, 1)},
-		{vec3(-0.5f, +0.5f, +0.5f), .texcoord=vec2(0, 1), .color=vec3(1, 1, 1)},
+		{vec3(-0.5f, -0.5f, +0.5f), .texcoord=vec2(0, 0), /*.color=vec3(1, 0, 0)},*/ .color=vec3(1, 1, 1)},
+		{vec3(+0.5f, -0.5f, +0.5f), .texcoord=vec2(1, 0), /*.color=vec3(0, 1, 0)},*/ .color=vec3(1, 1, 1)},
+		{vec3(+0.5f, +0.5f, +0.5f), .texcoord=vec2(1, 1), /*.color=vec3(0, 0, 1)},*/ .color=vec3(1, 1, 1)},
+		{vec3(-0.5f, +0.5f, +0.5f), .texcoord=vec2(0, 1), /*.color=vec3(1, 0, 1)},*/ .color=vec3(1, 1, 1)},
 
-		{vec3(+0.5f, -0.5f, +0.5f), .texcoord=vec2(0, 0), .color=vec3(1, 1, 1)},
-		{vec3(+0.5f, -0.5f, -0.5f), .texcoord=vec2(1, 0), .color=vec3(1, 1, 1)},
-		{vec3(+0.5f, +0.5f, -0.5f), .texcoord=vec2(1, 1), .color=vec3(1, 1, 1)},
-		{vec3(+0.5f, +0.5f, +0.5f), .texcoord=vec2(0, 1), .color=vec3(1, 1, 1)},
+		{vec3(+0.5f, -0.5f, +0.5f), .texcoord=vec2(0, 0), /*.color=vec3(1, 0, 0)},*/ .color=vec3(1, 1, 1)},
+		{vec3(+0.5f, -0.5f, -0.5f), .texcoord=vec2(1, 0), /*.color=vec3(0, 1, 0)},*/ .color=vec3(1, 1, 1)},
+		{vec3(+0.5f, +0.5f, -0.5f), .texcoord=vec2(1, 1), /*.color=vec3(0, 0, 1)},*/ .color=vec3(1, 1, 1)},
+		{vec3(+0.5f, +0.5f, +0.5f), .texcoord=vec2(0, 1), /*.color=vec3(1, 0, 1)},*/ .color=vec3(1, 1, 1)},
 
-		{vec3(-0.5f, -0.5f, -0.5f), .texcoord=vec2(0, 0), .color=vec3(1, 1, 1)},
-		{vec3(-0.5f, -0.5f, +0.5f), .texcoord=vec2(1, 0), .color=vec3(1, 1, 1)},
-		{vec3(-0.5f, +0.5f, +0.5f), .texcoord=vec2(1, 1), .color=vec3(1, 1, 1)},
-		{vec3(-0.5f, +0.5f, -0.5f), .texcoord=vec2(0, 1), .color=vec3(1, 1, 1)},
+		{vec3(-0.5f, -0.5f, -0.5f), .texcoord=vec2(0, 0), /*.color=vec3(1, 0, 0)},*/ .color=vec3(1, 1, 1)},
+		{vec3(-0.5f, -0.5f, +0.5f), .texcoord=vec2(1, 0), /*.color=vec3(0, 1, 0)},*/ .color=vec3(1, 1, 1)},
+		{vec3(-0.5f, +0.5f, +0.5f), .texcoord=vec2(1, 1), /*.color=vec3(0, 0, 1)},*/ .color=vec3(1, 1, 1)},
+		{vec3(-0.5f, +0.5f, -0.5f), .texcoord=vec2(0, 1), /*.color=vec3(1, 0, 1)},*/ .color=vec3(1, 1, 1)},
 	};
 
 	// R_Projection(R_PERSPECTIVE);
 	R_PerspectiveProjection(70, 320.0f/240.0f, 0.1f, 100.0f);
 
-	R_SetTranslation(vec3(0.5f, 0.0f, -2.0f));
-	R_SetRotation(vec3(0, x, x/2));
-	R_SetScale(vec3f(1.0f));
-	R_DrawQuads(verts2, array_size(verts2), 0xFF8888);
+	R_SetTranslation(vec3(0.0f, 0.0, -1.0f - (sinf(x) * 0.5f)));
+	// R_SetRotation(vec3(0, x, 0));
+	R_SetRotation(vec3(0, -0.5, 0));
+	R_SetScale(vec3f(0.5f));
+	R_DrawQuads(verts2, 4, 0xFF8888);
 }

@@ -43,7 +43,8 @@ void Init(state_t* state)
 
 	vid_init_opengl(&state->window);
 
-	state->framebuffer = sys_alloc_memory(320*240*4);
+	state->framebuffer = sys_alloc_memory(320*240*sizeof(color_t));
+	state->depthbuffer = sys_alloc_memory(320*240*sizeof(float));
 
 	// GLuint colorBufferTex;
 	glGenTextures(1, &state->framebufferTex);
@@ -57,6 +58,7 @@ void Update(state_t* state)
 {
 	__state = state;
 	framebuffer = state->framebuffer;
+	depthbuffer = state->depthbuffer;
 	window_t* vid = &state->window;
 	vid_poll_events(vid);
 
@@ -67,6 +69,9 @@ void Update(state_t* state)
 	
 	Render3DTestScene();
 	
+	// for (int idx=0; idx<320*240; ++idx) {
+	// 	framebuffer[idx] = depthbuffer[idx] * 100.0f;
+	// }
 
 	// glXMakeCurrent(vid->sysDisplay, vid->sysWindow, vid->sysGLContext);
 
