@@ -14,13 +14,27 @@
 #include "r_clip.c"
 
 
+typedef enum {
+	R_PERSPECTIVE = 1,
+	R_ORTHO,
+} projection_type_t;
+
+typedef struct {
+	float xFactor;
+	float yFactor;
+	float zFactor;
+	float zOffset;
+} perspective_factors_t;
+
 uint32_t* framebuffer;
 vec3_t __rTranslation = {0};
 vec3_t __rRotation = {0};
 vec3_t __rScale = {1, 1, 1};
 texture_t* __rActiveTexture = NULL;
+projection_type_t __rProjectionType = NULL;
+perspective_factors_t __rPerspectiveFactors = {0};
 
-uint32_t Color32(float r, float g, float b, float a)
+color_t Color32(float r, float g, float b, float a)
 {
 	uint32_t color =
 		(uint32_t)(r*255.0f) |
@@ -28,6 +42,26 @@ uint32_t Color32(float r, float g, float b, float a)
 		(uint32_t)(b*255.0f)<<16 |
 		(uint32_t)(a*255.0f)<<24;
 	return color;
+}
+
+vec4_t Color32ToFloat(color_t c)
+{
+	vec4_t color = {
+		(c&0xFF)/255.0f,
+		((c>>8)&0xFF)/255.0f,
+		((c>>16)&0xFF)/255.0f,
+		((c>>24)&0xFF)/255.0f,
+	};
+
+	return color;
+}
+
+uint32_t MixColor32(color_t a, color_t b)
+{
+	vec4_t af = Color32ToFloat(a);
+	vec4_t bf = Color32ToFloat(b);
+	vec4_t c = mul4(af, bf);
+	return Color32(c.r, c.g, c.b, c.a);
 }
 
 void R_SetTranslation(vec3_t translation)
@@ -43,6 +77,50 @@ void R_SetRotation(vec3_t rotation)
 void R_SetScale(vec3_t scale)
 {
 	__rScale = scale;
+}
+
+void R_Texture(texture_t* tex)
+{
+	__rActiveTexture = tex;
+}
+
+void R_Projection(projection_type_t type)
+{
+	__rProjectionType = type;
+}
+
+void R_PerspectiveProjection(float fov, float aspect, float near, float far)
+{
+	R_Projection(R_PERSPECTIVE);
+
+	float a = aspect;
+	float s = 1.0f / tanf((fov/180.0f*PI) / 2.0f);
+	float n = near;
+	float f = far;
+
+	__rPerspectiveFactors = (perspective_factors_t){
+		.xFactor = s / a,
+		.yFactor = s,
+		.zFactor = (f+n)/(n-f),
+		.zOffset = ((2*f*n)/(n-f)) * 1,
+	};
+}
+
+vertex_t R_PerspectiveTransform(mvertex_t in)
+{
+	vertex_t out;
+	out.texcoord = in.texcoord;
+	out.normal = in.normal;
+	out.color = in.color;
+
+	perspective_factors_t p = __rPerspectiveFactors;
+
+	out.pos.x = in.pos.x * p.xFactor;
+	out.pos.y = in.pos.y * p.yFactor;
+	out.pos.z = in.pos.z * p.zFactor + p.zOffset;
+	out.pos.w = -in.pos.z;
+
+	return out;
 }
 
 void R_Clear()
@@ -106,16 +184,32 @@ void R_DrawLineTriangles(mvertex_t* verts, int count, color_t color)
 
 vec3_t R_RotateVector3(vec3_t v, vec3_t rotation)
 {
+	float xCos = cosf(rotation.x);
+	float xSin = sinf(rotation.x);
+	v = (vec3_t){
+		v.x,
+		xCos*v.y + xSin*v.z,
+		xCos*v.z - xSin*v.y,
+	};
+
+	float yCos = cosf(rotation.y);
+	float ySin = sinf(rotation.y);
+	v = (vec3_t){
+		yCos*v.x + ySin*v.z,
+		v.y,
+		yCos*v.z - ySin*v.x,
+	};
+
 	// NOTE: Just Z rotation right now
 	float zCos = cosf(rotation.z);
 	float zSin = sinf(rotation.z);
-	vec3_t vector = {
+	v = (vec3_t){
 		zCos*v.x + zSin*v.y,
 		zCos*v.y - zSin*v.x,
 		v.z,
 	};
 
-	return vector;
+	return v;
 }
 
 float TriangleArea(vec2_t v0, vec2_t v1, vec2_t v2)
@@ -163,7 +257,14 @@ vertex_t LerpTriVetices(vec2_t coord, vertex_t v0, vertex_t v1, vertex_t v2)
 {
 	vec3_t t = BarycentricCoords(vec2(coord.x, coord.y), v0.pos.xy, v1.pos.xy, v2.pos.xy);
 	vertex_t v;
-	v.pos = vec4f2(coord, 0, 1);
+	// v.pos = vec4f2(coord, 0, 1);
+
+	vec4_t pos = {
+		v0.pos.x*t.x + v1.pos.x*t.y + v2.pos.x*t.z,
+		v0.pos.y*t.x + v1.pos.y*t.y + v2.pos.y*t.z,
+		v0.pos.z*t.x + v1.pos.z*t.y + v2.pos.z*t.z,
+		v0.pos.w*t.x + v1.pos.w*t.y + v2.pos.w*t.z,
+	};
 
 	vec3_t color3 = {
 		v0.color.r*t.x + v1.color.r*t.y + v2.color.r*t.z,
@@ -176,6 +277,7 @@ vertex_t LerpTriVetices(vec2_t coord, vertex_t v0, vertex_t v1, vertex_t v2)
 		clamp(v0.texcoord.y*t.x + v1.texcoord.y*t.y + v2.texcoord.y*t.z, 0.001f, 0.999f),
 	};
 
+	v.pos = pos;
 	v.color = color3;
 	v.texcoord = texcoord;
 
@@ -233,6 +335,23 @@ void R_RasterizeTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
 {
 	vidrect_t res = {0, 0, 320, 240};
 
+	// Divide by W
+	v0.pos.xyz = div3(v0.pos.xyz, vec3f(v0.pos.w));
+	v1.pos.xyz = div3(v1.pos.xyz, vec3f(v1.pos.w));
+	v2.pos.xyz = div3(v2.pos.xyz, vec3f(v2.pos.w));
+
+	// Calc reciprocals of UV, Color and W for perspective correction
+	v0.texcoord = div2(v0.texcoord, vec2f(v0.pos.w));
+	v1.texcoord = div2(v1.texcoord, vec2f(v1.pos.w));
+	v2.texcoord = div2(v2.texcoord, vec2f(v2.pos.w));
+	v0.color = div3(v0.color, vec3f(v0.pos.w));
+	v1.color = div3(v1.color, vec3f(v1.pos.w));
+	v2.color = div3(v2.color, vec3f(v2.pos.w));
+	v0.pos.w = 1.0f / v0.pos.w;
+	v1.pos.w = 1.0f / v1.pos.w;
+	v2.pos.w = 1.0f / v2.pos.w;
+
+	// Transform NDC ot framebuffer coords
 	v0.pos = ClipSpaceToFramebufferSpace(v0.pos);
 	v1.pos = ClipSpaceToFramebufferSpace(v1.pos);
 	v2.pos = ClipSpaceToFramebufferSpace(v2.pos);
@@ -294,6 +413,9 @@ void R_RasterizeTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
 
 				vertex_t v = LerpTriVetices(vec2(x, l), v0, v1, v2);
 
+				v.texcoord = mul2(v.texcoord, vec2f(1.0f / v.pos.w));
+				v.color = mul3(v.color, vec3f(1.0f / v.pos.w));
+
 				uint32_t triColorViz =
 					((uint32_t)(t.r*255.0f)<<0) |
 					((uint32_t)(t.g*255.0f)<<8) |
@@ -316,7 +438,7 @@ void R_RasterizeTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
 					continue; // TODO: Shouldn't be needed
 				}
 
-				framebuffer[l*res.w + x] = texel;
+				framebuffer[l*res.w + x] = MixColor32(color, texel);
 			}
 
 			lineStart += startStep;
@@ -358,6 +480,9 @@ void R_RasterizeTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
 
 				vertex_t v = LerpTriVetices(vec2(x, l), v0, v1, v2);
 
+				v.texcoord = mul2(v.texcoord, vec2f(1.0f / v.pos.w));
+				v.color = mul3(v.color, vec3f(1.0f / v.pos.w));
+
 				uint32_t color =
 					((uint32_t)(v.color.r*255.0f)<<0) |
 					((uint32_t)(v.color.g*255.0f)<<8) |
@@ -375,13 +500,21 @@ void R_RasterizeTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
 					continue; // TODO: Shouldn't be needed
 				}
 
-				framebuffer[l*res.w + x] = texel;
+				framebuffer[l*res.w + x] = MixColor32(color, texel);
 			}
 
 			lineStart += startStep;
 			lineEnd += endStep;
 		}
 	// }
+
+	// Debug lines
+	// R_RasterizeLine(v0.pos, v1.pos, color);
+	// R_RasterizeLine(v1.pos, v2.pos, color);
+	// R_RasterizeLine(v0.pos, v2.pos, color);
+	R_DrawLine(v0.pos.x, v0.pos.y, v1.pos.x, v1.pos.y, color);
+	R_DrawLine(v1.pos.x, v1.pos.y, v2.pos.x, v2.pos.y, color);
+	R_DrawLine(v0.pos.x, v0.pos.y, v2.pos.x, v2.pos.y, color);
 }
 
 void R_DrawTriangle(mvertex_t in0, mvertex_t in1, mvertex_t in2, color_t color)
@@ -399,19 +532,30 @@ void R_DrawTriangle(mvertex_t in0, mvertex_t in1, mvertex_t in2, color_t color)
 	in1.pos = mul3(in1.pos, __rScale);
 	in2.pos = mul3(in2.pos, __rScale);
 	
-	in0.pos.x += __rTranslation.x;
-	in0.pos.y += __rTranslation.y;
-	in1.pos.x += __rTranslation.x;
-	in1.pos.y += __rTranslation.y;
-	in2.pos.x += __rTranslation.x;
-	in2.pos.y += __rTranslation.y;
+	in0.pos = add3(in0.pos, __rTranslation);
+	in1.pos = add3(in1.pos, __rTranslation);
+	in2.pos = add3(in2.pos, __rTranslation);
+
+	vertex_t v0;
+	vertex_t v1;
+	vertex_t v2;
+
+	switch (__rProjectionType) {
+		case R_PERSPECTIVE:
+			v0 = R_PerspectiveTransform(in0);
+			v1 = R_PerspectiveTransform(in1);
+			v2 = R_PerspectiveTransform(in2);
+			break;
+		default:
+			v0 = MVertexToVertex(in0);
+			v1 = MVertexToVertex(in1);
+			v2 = MVertexToVertex(in2);
+			break;
+	}
 
 	// v0.pos.w = 1.0f;
 	// v1.pos.w = 1.0f;
 	// v2.pos.w = 1.0f;
-	vertex_t v0 = MVertexToVertex(in0);
-	vertex_t v1 = MVertexToVertex(in1);
-	vertex_t v2 = MVertexToVertex(in2);
 
 	polygon_t poly = {.vertices={v0, v1, v2}, .count=3};
 	poly = R_ClipWithPlane(poly, PLANE_X0);
@@ -431,10 +575,6 @@ void R_DrawTriangle(mvertex_t in0, mvertex_t in1, mvertex_t in2, color_t color)
 		// R_RasterizePoint(vec3(t0.pos.x, t0.pos.y, 0), 0xFFFFFF);
 		// R_RasterizePoint(vec3(t1.pos.x, t1.pos.y, 0), 0xFFFFFF);
 		// R_RasterizePoint(vec3(t2.pos.x, t2.pos.y, 0), 0xFFFFFF);
-
-		R_RasterizeLine(t0.pos, t1.pos, color);
-		R_RasterizeLine(t1.pos, t2.pos, color);
-		R_RasterizeLine(t0.pos, t2.pos, color);
 	}
 
 	// R_RasterizeTriangle(v0, v1, v2, color);
@@ -455,19 +595,44 @@ void R_DrawTriangles(mvertex_t* verts, int count, color_t color)
 	}
 }
 
+void R_DrawQuads(mvertex_t* verts, int count, color_t color)
+{
+	assert(count % 4 == 0);
+
+	for (int i=0; i<count; i+=4) {
+		mvertex_t v0 = verts[i+0];
+		mvertex_t v1 = verts[i+1];
+		mvertex_t v2 = verts[i+2];
+		mvertex_t v3 = verts[i+3];
+
+		R_DrawTriangle(v0, v1, v2, color);
+		R_DrawTriangle(v2, v3, v0, color);
+	}
+}
+
 texture_t testTexture;
 
-void R_Init()
+texture_t R_LoadTexture(char* path)
 {
 	state_t* state = GetState();
 
-	file_data_t* file = Sys_LoadFile(&state->assetArena, "assets/metal2.bmp");
+	file_data_t* file = Sys_LoadFile(&state->assetArena, path);
 
+	texture_t result;
 	bmp_info_t info = bmp_get_info(file->data);
-	testTexture.texels = alloc_memory(&state->assetArena, info.width*info.height*sizeof(color_t));
-	testTexture.width = info.width;
-	testTexture.height = info.height;
-	bmp_load_rgba32(file->data, testTexture.texels);
+	result.texels = alloc_memory(&state->assetArena, info.width*info.height*sizeof(color_t));
+	result.width = info.width;
+	result.height = info.height;
+	bmp_load_rgba32(file->data, result.texels);
+
+	free_memory(&state->assetArena, file);
+
+	return result;
+}
+
+void R_Init()
+{
+	
 }
 
 void RenderTestScene()
@@ -499,10 +664,10 @@ void RenderTestScene()
 	// }
 
 	if (!testTexture.texels) {
-		R_Init();
+		testTexture = R_LoadTexture("assets/metal2.bmp");
 	}
 
-	__rActiveTexture = &testTexture;
+	R_Texture(&testTexture);
 
 	R_Clear();
 
@@ -553,9 +718,9 @@ void RenderTestScene()
 		// {vec3(-28.0f, -20.0f, 0), .texcoord=vec2(0, 0), .color=vec3(1, 0, 0)},
 		// {vec3(+48.0f, +0.0f, 0), .texcoord=vec2(1, 0), .color=vec3(0, 1, 0)},
 		// {vec3(+12.0f, +28.0f, 0), .texcoord=vec2(1, 1), .color=vec3(0, 0, 1)},
-		{vec3(-0.5f, -0.5f, 0), .texcoord=vec2(0, 0), .color=vec3(1, 0, 0)},
-		{vec3(+0.5f, -0.5f, 0), .texcoord=vec2(1, 0), .color=vec3(0, 1, 0)},
-		{vec3(+0.0f, +0.5f, 0), .texcoord=vec2(1, 1), .color=vec3(1, 0, 1)},
+		{vec3(-0.5f, -0.5f, 0), .texcoord=vec2(0, 0), .color=vec3(1, 1, 1)},
+		{vec3(+0.5f, -0.5f, 0), .texcoord=vec2(1, 0), .color=vec3(1, 1, 1)},
+		{vec3(+0.0f, +0.5f, 0), .texcoord=vec2(1, 1), .color=vec3(1, 1, 1)},
 	};
 	// vertex_t verts2[] = {
 	// 	{vec3(-28.0f, -5.0f, 0)},
@@ -577,4 +742,40 @@ void Render3DTestScene()
 	double time = time_get_ms();
 	float delta = clamp((time - prevTime) / 1000.0f, 0, 0.5f);
 	prevTime = time;
+
+	if (!testTexture.texels) {
+		testTexture = R_LoadTexture("assets/metal2.bmp");
+	}
+
+	R_Texture(&testTexture);
+
+	R_Clear();
+
+	static float x = 0.0f;
+	x += delta * 1.0f;
+
+	mvertex_t verts2[] = {
+		{vec3(-0.5f, -0.5f, +0.5f), .texcoord=vec2(0, 0), .color=vec3(1, 1, 1)},
+		{vec3(+0.5f, -0.5f, +0.5f), .texcoord=vec2(1, 0), .color=vec3(1, 1, 1)},
+		{vec3(+0.5f, +0.5f, +0.5f), .texcoord=vec2(1, 1), .color=vec3(1, 1, 1)},
+		{vec3(-0.5f, +0.5f, +0.5f), .texcoord=vec2(0, 1), .color=vec3(1, 1, 1)},
+
+		{vec3(+0.5f, -0.5f, +0.5f), .texcoord=vec2(0, 0), .color=vec3(1, 1, 1)},
+		{vec3(+0.5f, -0.5f, -0.5f), .texcoord=vec2(1, 0), .color=vec3(1, 1, 1)},
+		{vec3(+0.5f, +0.5f, -0.5f), .texcoord=vec2(1, 1), .color=vec3(1, 1, 1)},
+		{vec3(+0.5f, +0.5f, +0.5f), .texcoord=vec2(0, 1), .color=vec3(1, 1, 1)},
+
+		{vec3(-0.5f, -0.5f, -0.5f), .texcoord=vec2(0, 0), .color=vec3(1, 1, 1)},
+		{vec3(-0.5f, -0.5f, +0.5f), .texcoord=vec2(1, 0), .color=vec3(1, 1, 1)},
+		{vec3(-0.5f, +0.5f, +0.5f), .texcoord=vec2(1, 1), .color=vec3(1, 1, 1)},
+		{vec3(-0.5f, +0.5f, -0.5f), .texcoord=vec2(0, 1), .color=vec3(1, 1, 1)},
+	};
+
+	// R_Projection(R_PERSPECTIVE);
+	R_PerspectiveProjection(70, 320.0f/240.0f, 0.1f, 100.0f);
+
+	R_SetTranslation(vec3(0.5f, 0.0f, -2.0f));
+	R_SetRotation(vec3(0, x, x/2));
+	R_SetScale(vec3f(1.0f));
+	R_DrawQuads(verts2, array_size(verts2), 0xFF8888);
 }

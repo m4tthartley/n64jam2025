@@ -65,7 +65,7 @@ void Update(state_t* state)
 	}
 
 	
-	RenderTestScene();
+	Render3DTestScene();
 	
 
 	// glXMakeCurrent(vid->sysDisplay, vid->sysWindow, vid->sysGLContext);
