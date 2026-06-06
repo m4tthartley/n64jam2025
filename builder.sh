@@ -4,4 +4,4 @@
 ##
 
 
-builder -D. -B./build.sh -Ec,h,sh
+builder -D. -D../core/core -B./build.sh -Ec,h,sh

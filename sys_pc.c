@@ -9,6 +9,7 @@
 #include <core/sys.h>
 #include <core/video.h>
 #include <core/print.h>
+#include <core/gltf.h>
 
 #include "r_render_pc.c"
 
@@ -38,6 +39,10 @@ file_data_t* Sys_LoadFile(allocator_t* allocator, char* path)
 void Init(state_t* state)
 {
 	state->assetArena = virtual_heap_allocator(MB(100), MB(1));
+
+	file_data_t* gltf = Sys_LoadFile(&__state->assetArena, "assets/cryopod_base.glb");
+	Gltf_Load(gltf->data);
+	exit(0);
 
 	state->window = vid_init_window("Linux Window", 320*4, 240*4, 0);
 
