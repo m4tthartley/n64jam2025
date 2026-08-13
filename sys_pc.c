@@ -36,13 +36,46 @@ file_data_t* Sys_LoadFile(allocator_t* allocator, char* path)
 	return result;
 }
 
+mesh_t ConvertToMesh(gltf_model_t* gltf)
+{
+	// NOTE: This is currently just translating the model containing multiple meshes
+	// 		into a single mesh for simplicity
+
+	int vertexCount = 0;
+	for (int idx=0; idx<gltf->meshCount; ++idx) {
+		vertexCount += gltf->meshes[idx].vertexCount;
+	}
+
+	int size = vertexCount * sizeof(mvertex_t);
+
+	state_t* state = GetState();
+
+	mesh_t mesh = {
+		.vertices = alloc_memory(&state->assetArena, size),
+		.vertexCount = vertexCount,
+	};
+
+	for (int mi=0; mi<gltf->meshCount; ++mi) {
+		for (int idx=0; idx<gltf->meshes[mi].vertexCount; ++idx) {
+			mesh.vertices[idx] = (mvertex_t){
+				.pos = gltf->meshes[mi].vertices[idx].pos,
+				.normal = gltf->meshes[mi].vertices[idx].normal,
+				.color = gltf->meshes[mi].vertices[idx].color,
+				.texcoord = gltf->meshes[mi].vertices[idx].uv,
+			};
+		}
+	}
+
+	return mesh;
+}
+
 void Init(state_t* state)
 {
 	state->assetArena = virtual_heap_allocator(MB(100), MB(1));
 
 	file_data_t* gltf = Sys_LoadFile(&__state->assetArena, "assets/cryopod_base.glb");
-	Gltf_Load(gltf->data);
-	exit(0);
+	gltf_model_t cryoGltf = gltf_load(gltf->data);
+	state->cryoMesh = ConvertToMesh(&cryoGltf);
 
 	state->window = vid_init_window("Linux Window", 320*4, 240*4, 0);
 
@@ -72,7 +105,7 @@ void Update(state_t* state)
 	}
 
 	
-	Render3DTestScene();
+	Render3DModelTestScene();
 	
 	// for (int idx=0; idx<320*240; ++idx) {
 	// 	framebuffer[idx] = depthbuffer[idx] * 100.0f;

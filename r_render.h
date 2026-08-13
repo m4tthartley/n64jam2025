@@ -37,6 +37,20 @@ typedef struct {
 	int width, height;
 } texture_t;
 
+// I'm currently thinking that each mesh will be part of a model
+// with a different texture
+// But it might end up that a mesh is each part of the skeleton
+typedef struct {
+	mvertex_t* vertices;
+	uint32_t vertexCount;
+	texture_t texture;
+} mesh_t;
+
+typedef struct {
+	mesh_t* meshes;
+	uint32_t meshCount;
+} model_t;
+
 
 extern inline vertex_t MVertexToVertex(mvertex_t v)
 {

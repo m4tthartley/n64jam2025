@@ -142,52 +142,6 @@ void R_BlitPixel(int x, int y, color_t color)
 	}
 }
 
-void R_DrawLine(float v0x, float v0y, float v1x, float v1y, color_t color)
-{
-	v0x += __rTranslation.x;
-	v0y += __rTranslation.y;
-	v1x += __rTranslation.x;
-	v1y += __rTranslation.y;
-
-	float v0[] = {v0x, v0y};
-	float v1[] = {v1x, v1y};
-	float diffx = v1[0] - v0[0];
-	float diffy = v1[1] - v0[1];
-	bool steep = fabs(diffy) > fabs(diffx);
-	int i0 = steep;
-	int i1 = !i0;
-	if (v0[i0] > v1[i0]) {
-		SWAP(v0[0], v1[0]);
-		SWAP(v0[1], v1[1]);
-	}
-
-	float len = (v1[i0]-v0[i0]);
-	float ratio = (v1[i1]-v0[i1]) / len;
-
-	for (int i=0; i<len; ++i) {
-		int32_t p[2];
-		p[i1] = v0[i1] + ratio*i;
-		p[i0] = v0[i0] + i;
-		R_BlitPixel(p[0], p[1], color);
-	}
-}
-
-void R_DrawLineTriangles(mvertex_t* verts, int count, color_t color)
-{
-	assert(count % 3 == 0);
-
-	// R_DrawLine(verts[0].pos.x, verts[0].pos.y, verts[1].pos.x, verts[1].pos.y, color);
-	// R_DrawLine(verts[1].pos.x, verts[1].pos.y, verts[2].pos.x, verts[2].pos.y, color);
-	// R_DrawLine(verts[2].pos.x, verts[2].pos.y, verts[0].pos.x, verts[0].pos.y, color);
-	for (int i=0; i<count; i+=3) {
-		for (int v=0; v<3; ++v) {
-			vec3_t v0 = verts[i+v].pos;
-			vec3_t v1 = verts[i + (v+1)%3].pos;
-			R_DrawLine(v0.x, v0.y, v1.x, v1.y, color);
-		}
-	}
-}
-
 vec3_t R_RotateVector3(vec3_t v, vec3_t rotation)
 {
 	float xCos = cosf(rotation.x);
@@ -307,6 +261,27 @@ vec4_t ClipSpaceToFramebufferSpace(vec4_t v)
 	return result;
 }
 
+// void R_DrawLine(float v0x, float v0y, float v1x, float v1y, color_t color)
+// {
+	
+// }
+
+// void R_DrawLineTriangles(mvertex_t* verts, int count, color_t color)
+// {
+// 	assert(count % 3 == 0);
+
+// 	// R_DrawLine(verts[0].pos.x, verts[0].pos.y, verts[1].pos.x, verts[1].pos.y, color);
+// 	// R_DrawLine(verts[1].pos.x, verts[1].pos.y, verts[2].pos.x, verts[2].pos.y, color);
+// 	// R_DrawLine(verts[2].pos.x, verts[2].pos.y, verts[0].pos.x, verts[0].pos.y, color);
+// 	for (int i=0; i<count; i+=3) {
+// 		for (int v=0; v<3; ++v) {
+// 			vec3_t v0 = verts[i+v].pos;
+// 			vec3_t v1 = verts[i + (v+1)%3].pos;
+// 			R_DrawLine(v0.x, v0.y, v1.x, v1.y, color);
+// 		}
+// 	}
+// }
+
 /*
 	The Rasterize functions take NDCs
 */
@@ -323,20 +298,56 @@ void R_RasterizePoint(vec4_t pos, color_t color)
 	}
 }
 
-void R_RasterizeLine(vec4_t start, vec4_t end, color_t color)
+void R_RasterizeLine(vec4_t v0, vec4_t v1, color_t color)
 {
 	vidrect_t res = {0, 0, 320, 240};
 
-	vec4_t v0 = ClipSpaceToFramebufferSpace(start);
-	vec4_t v1 = ClipSpaceToFramebufferSpace(end);
+	// Divide by W
+	v0.xyz = div3(v0.xyz, vec3f(v0.w));
+	v1.xyz = div3(v1.xyz, vec3f(v1.w));
+
+	vec4_t vec0 = ClipSpaceToFramebufferSpace(v0);
+	vec4_t vec1 = ClipSpaceToFramebufferSpace(v1);
 	// int x0 = coords0.x;
 	// int y0 = coords0.y;
 	// int x1 = coords1.x;
 	// int y1 = coords1.y;
 
 	// if (x >= res.x && x < res.w && y >= res.y && y < res.h) {
-		R_DrawLine(v0.x, v0.y, v1.x, v1.y, color);
+		// R_DrawLine(v0.x, v0.y, v1.x, v1.y, color);
 	// }
+
+	float v0x = vec0.x;
+	float v0y = vec0.y;
+	float v1x = vec1.x;
+	float v1y = vec1.y;
+
+	v0x += __rTranslation.x;
+	v0y += __rTranslation.y;
+	v1x += __rTranslation.x;
+	v1y += __rTranslation.y;
+
+	float v0xy[] = {v0x, v0y};
+	float v1xy[] = {v1x, v1y};
+	float diffx = v1xy[0] - v0xy[0];
+	float diffy = v1xy[1] - v0xy[1];
+	bool steep = fabs(diffy) > fabs(diffx);
+	int i0 = steep;
+	int i1 = !i0;
+	if (v0xy[i0] > v1xy[i0]) {
+		SWAP(v0xy[0], v1xy[0]);
+		SWAP(v0xy[1], v1xy[1]);
+	}
+
+	float len = (v1xy[i0]-v0xy[i0]);
+	float ratio = (v1xy[i1]-v0xy[i1]) / len;
+
+	for (int i=0; i<len; ++i) {
+		int32_t p[2];
+		p[i1] = v0xy[i1] + ratio*i;
+		p[i0] = v0xy[i0] + i;
+		R_BlitPixel(p[0], p[1], color);
+	}
 }
 
 // void _RasterizeTriangleHalf(
@@ -454,7 +465,7 @@ void R_RasterizeTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
 	v1.pos.w = 1.0f / v1.pos.w;
 	v2.pos.w = 1.0f / v2.pos.w;
 
-	// Transform NDC ot framebuffer coords
+	// Transform NDC to framebuffer coords
 	v0.pos = ClipSpaceToFramebufferSpace(v0.pos);
 	v1.pos = ClipSpaceToFramebufferSpace(v1.pos);
 	v2.pos = ClipSpaceToFramebufferSpace(v2.pos);
@@ -542,7 +553,8 @@ void R_RasterizeTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
 
 				int tx = (float)__rActiveTexture->width * v.texcoord.x;
 				int ty = (float)__rActiveTexture->height * v.texcoord.y;
-				uint32_t texel = __rActiveTexture->texels[ty*__rActiveTexture->width+tx];
+				// uint32_t texel = __rActiveTexture->texels[ty*__rActiveTexture->width+tx];
+				uint32_t texel = 0xFFFFFFFF;
 
 				uint32_t texCoordViz =
 					((uint32_t)((float)tx*8)<<0) |
@@ -601,7 +613,8 @@ void R_RasterizeTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
 
 				int tx = (float)__rActiveTexture->width * v.texcoord.x;
 				int ty = (float)__rActiveTexture->height * v.texcoord.y;
-				uint32_t texel = __rActiveTexture->texels[ty*__rActiveTexture->width+tx];
+				// uint32_t texel = __rActiveTexture->texels[ty*__rActiveTexture->width+tx];
+				uint32_t texel = 0xFFFFFFFF;
 
 				uint32_t texCoordViz =
 					((uint32_t)((float)tx*8)<<0) |
@@ -630,6 +643,26 @@ void R_RasterizeTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
 	// R_DrawLine(v0.pos.x, v0.pos.y, v1.pos.x, v1.pos.y, color);
 	// R_DrawLine(v1.pos.x, v1.pos.y, v2.pos.x, v2.pos.y, color);
 	// R_DrawLine(v0.pos.x, v0.pos.y, v2.pos.x, v2.pos.y, color);
+}
+
+vertex_t R_TransformAndProject(mvertex_t in)
+{
+	in.pos = R_RotateVector3(in.pos, __rRotation);
+	in.pos = mul3(in.pos, __rScale);
+	in.pos = add3(in.pos, __rTranslation);
+
+	vertex_t out;
+
+	switch (__rProjectionType) {
+		case R_PERSPECTIVE:
+			out = R_PerspectiveTransform(in);
+			break;
+		default:
+			out = MVertexToVertex(in);
+			break;
+	}
+
+	return out;
 }
 
 void R_DrawTriangle(mvertex_t in0, mvertex_t in1, mvertex_t in2, color_t color)
@@ -695,6 +728,32 @@ void R_DrawTriangle(mvertex_t in0, mvertex_t in1, mvertex_t in2, color_t color)
 	// R_RasterizeTriangle(v0, v1, v2, color);
 }
 
+void R_DrawLineTriangle(mvertex_t in0, mvertex_t in1, mvertex_t in2, color_t color)
+{
+	vertex_t v0 = R_TransformAndProject(in0);
+	vertex_t v1 = R_TransformAndProject(in1);
+	vertex_t v2 = R_TransformAndProject(in2);
+
+	polygon_t poly = {.vertices={v0, v1, v2}, .count=3};
+	poly = R_ClipWithPlane(poly, PLANE_X0);
+	poly = R_ClipWithPlane(poly, PLANE_X1);
+	poly = R_ClipWithPlane(poly, PLANE_Y0);
+	poly = R_ClipWithPlane(poly, PLANE_Y1);
+	poly = R_ClipWithPlane(poly, PLANE_Z0);
+	poly = R_ClipWithPlane(poly, PLANE_Z1);
+
+	for (int vi=0; vi<(poly.count-2); ++vi) {
+		vertex_t t0 = poly.vertices[0];
+		vertex_t t1 = poly.vertices[vi+1];
+		vertex_t t2 = poly.vertices[vi+2];
+
+		// R_RasterizeTriangle(t0, t1, t2, color);
+		R_RasterizeLine(t0.pos, t1.pos, color);
+		R_RasterizeLine(t1.pos, t2.pos, color);
+		R_RasterizeLine(t0.pos, t2.pos, color);
+	}
+}
+
 void R_DrawTriangles(mvertex_t* verts, int count, color_t color)
 {
 	assert(count % 3 == 0);
@@ -707,6 +766,30 @@ void R_DrawTriangles(mvertex_t* verts, int count, color_t color)
 		mvertex_t v2 = verts[i+2];
 
 		R_DrawTriangle(v0, v1, v2, color);
+	}
+}
+
+void R_DrawLineTriangles(mvertex_t* verts, int count, color_t color)
+{
+	assert(count % 3 == 0);
+
+	// R_DrawLine(verts[0].pos.x, verts[0].pos.y, verts[1].pos.x, verts[1].pos.y, color);
+	// R_DrawLine(verts[1].pos.x, verts[1].pos.y, verts[2].pos.x, verts[2].pos.y, color);
+	// R_DrawLine(verts[2].pos.x, verts[2].pos.y, verts[0].pos.x, verts[0].pos.y, color);
+	// for (int i=0; i<count; i+=3) {
+	// 	for (int v=0; v<3; ++v) {
+	// 		vec3_t v0 = verts[i+v].pos;
+	// 		vec3_t v1 = verts[i + (v+1)%3].pos;
+	// 		R_DrawLine(v0.x, v0.y, v1.x, v1.y, color);
+	// 	}
+	// }
+
+	for (int i=0; i<count; i+=3) {
+		mvertex_t v0 = verts[i+0];
+		mvertex_t v1 = verts[i+1];
+		mvertex_t v2 = verts[i+2];
+
+		R_DrawLineTriangle(v0, v1, v2, color);
 	}
 }
 
@@ -810,9 +893,9 @@ void RenderTestScene()
 	static float x = 0.0f;
 	x += delta * 1.0f;
 	R_SetTranslation(vec3(160, 120, 0));
-	R_DrawLine(cosf(x)*100, sinf(x)*100, cosf(x)*-100, sinf(x)*-100, 0x0000FF);
+	// R_DrawLine(cosf(x)*100, sinf(x)*100, cosf(x)*-100, sinf(x)*-100, 0x0000FF);
 	R_SetTranslation(vec3(0, 0, 0));
-	R_DrawLine(120, 80, 220, 150, 0xFF0000);
+	// R_DrawLine(120, 80, 220, 150, 0xFF0000);
 
 	mvertex_t verts[] = {
 		{vec3(-10.0f, -10.0f, 0)},
@@ -900,4 +983,52 @@ void Render3DTestScene()
 	R_SetScale(vec3f(0.5f));
 	R_DrawQuads(verts2, 12, 0xFF8888);
 	// R_DrawTriangles(verts2, 3, 0xFF8888);
+}
+
+void Render3DModelTestScene()
+{
+	state_t* state = GetState();
+
+	static double prevTime;
+	double time = time_get_ms();
+	float delta = clamp((time - prevTime) / 1000.0f, 0, 0.5f);
+	prevTime = time;
+
+	if (!testTexture.texels) {
+		testTexture = R_LoadTexture("assets/metal2.bmp");
+	}
+
+	R_Texture(&testTexture);
+
+	R_Clear();
+
+	static float x = 0.0f;
+	x += delta * 1.0f;
+
+	mvertex_t verts2[] = {
+		{vec3(-0.5f, -0.5f, +0.5f), .texcoord=vec2(0, 0), /*.color=vec3(1, 0, 0)},*/ .color=vec3(1, 1, 1)},
+		{vec3(+0.5f, -0.5f, +0.5f), .texcoord=vec2(1, 0), /*.color=vec3(0, 1, 0)},*/ .color=vec3(1, 1, 1)},
+		{vec3(+0.5f, +0.5f, +0.5f), .texcoord=vec2(1, 1), /*.color=vec3(0, 0, 1)},*/ .color=vec3(1, 1, 1)},
+		{vec3(-0.5f, +0.5f, +0.5f), .texcoord=vec2(0, 1), /*.color=vec3(1, 0, 1)},*/ .color=vec3(1, 1, 1)},
+
+		{vec3(+0.5f, -0.5f, +0.5f), .texcoord=vec2(0, 0), /*.color=vec3(1, 0, 0)},*/ .color=vec3(1, 1, 1)},
+		{vec3(+0.5f, -0.5f, -0.5f), .texcoord=vec2(1, 0), /*.color=vec3(0, 1, 0)},*/ .color=vec3(1, 1, 1)},
+		{vec3(+0.5f, +0.5f, -0.5f), .texcoord=vec2(1, 1), /*.color=vec3(0, 0, 1)},*/ .color=vec3(1, 1, 1)},
+		{vec3(+0.5f, +0.5f, +0.5f), .texcoord=vec2(0, 1), /*.color=vec3(1, 0, 1)},*/ .color=vec3(1, 1, 1)},
+
+		{vec3(-0.5f, -0.5f, -0.5f), .texcoord=vec2(0, 0), /*.color=vec3(1, 0, 0)},*/ .color=vec3(1, 1, 1)},
+		{vec3(-0.5f, -0.5f, +0.5f), .texcoord=vec2(1, 0), /*.color=vec3(0, 1, 0)},*/ .color=vec3(1, 1, 1)},
+		{vec3(-0.5f, +0.5f, +0.5f), .texcoord=vec2(1, 1), /*.color=vec3(0, 0, 1)},*/ .color=vec3(1, 1, 1)},
+		{vec3(-0.5f, +0.5f, -0.5f), .texcoord=vec2(0, 1), /*.color=vec3(1, 0, 1)},*/ .color=vec3(1, 1, 1)},
+	};
+
+	// R_Projection(R_PERSPECTIVE);
+	R_PerspectiveProjection(70, 320.0f/240.0f, 0.1f, 100.0f);
+
+	R_SetTranslation(vec3(0.0f, 0.0, -3.0f - (sinf(x) * 0.5f)));
+	R_SetRotation(vec3(0, x, 0));
+	// R_SetRotation(vec3(0, -0.5, 0));
+	R_SetScale(vec3f(0.5f));
+	// R_DrawQuads(verts2, 12, 0xFF8888);
+	R_DrawLineTriangles(state->cryoMesh.vertices, state->cryoMesh.vertexCount, 0xFF8888);
 }

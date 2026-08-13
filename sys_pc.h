@@ -9,6 +9,7 @@
 #include <GL/gl.h>
 #include <core/core.h>
 #include <core/video.h>
+#include "r_render.h"
 
 
 typedef struct {
@@ -18,6 +19,7 @@ typedef struct {
 	GLuint framebufferTex;
 
 	allocator_t assetArena;
+	mesh_t cryoMesh;
 } state_t;
 
 state_t* GetState();

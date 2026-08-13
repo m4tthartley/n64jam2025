@@ -23,4 +23,4 @@ echo "Building game library..."
 clang sys_pc.c -g $(coreconfig) -lX11 -lGL -o ./build/game.tmp.so -shared -fPIC
 mv ./build/game.tmp.so ./build/game.so
 
-./build/game
+# ./build/game
