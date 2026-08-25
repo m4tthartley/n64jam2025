@@ -20,10 +20,14 @@ typedef struct {
 
 	allocator_t assetArena;
 	mesh_t cryoMesh;
+	model_t cryoModel;
+	model_t cubeModel;
+	model_t testboxModel;
 } state_t;
 
 state_t* GetState();
 file_data_t* Sys_LoadFile(allocator_t* allocator, char* path);
+texture_t R_LoadTexture(char* path);
 
 
 #endif

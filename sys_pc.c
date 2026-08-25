@@ -10,6 +10,7 @@
 #include <core/video.h>
 #include <core/print.h>
 #include <core/gltf.h>
+#include <core/bmp.h>
 
 #include "r_render_pc.c"
 
@@ -33,6 +34,29 @@ file_data_t* Sys_LoadFile(allocator_t* allocator, char* path)
 	result->stat = info;
 	sys_read(file, 0, result->data, info.size);
 	sys_close(file);
+	return result;
+}
+
+texture_t R_LoadTexture(char* path)
+{
+	state_t* state = GetState();
+
+	file_data_t* file = Sys_LoadFile(&state->assetArena, path);
+
+	texture_t result;
+	bmp_info_t info = bmp_get_info(file->data);
+	result.texels = alloc_memory(&state->assetArena, info.width*info.height*sizeof(color_t));
+	result.width = info.width;
+	result.height = info.height;
+	bmp_load_rgba32(file->data, result.texels);
+
+	for (int idx=0; idx<result.width*result.height; ++idx) {
+		vec4_t c = Color32ToFloat(result.texels[idx]);
+		result.texels[idx] = Color32(c.b, c.g, c.r, c.a);
+	}
+
+	free_memory(&state->assetArena, file);
+
 	return result;
 }
 
@@ -69,6 +93,46 @@ mesh_t ConvertToMesh(gltf_model_t* gltf)
 	return mesh;
 }
 
+model_t ConvertToModel(gltf_model_t* gltf)
+{
+	state_t* state = GetState();
+
+	mesh_t* meshes = alloc_memory(&state->assetArena, sizeof(mesh_t)*gltf->meshCount);
+
+	for (int i=0; i<gltf->meshCount; ++i) {
+		gltf_mesh_t* gmesh = gltf->meshes + i;
+		meshes[i].vertexCount = gltf->meshes[i].vertexCount;
+		meshes[i].vertices = alloc_memory(&state->assetArena, sizeof(mvertex_t)*meshes[i].vertexCount);
+		for (int vi=0; vi<meshes[i].vertexCount; ++vi) {
+			meshes[i].vertices[vi] = (mvertex_t){
+				.pos = gltf->meshes[i].vertices[vi].pos,
+				.normal = gltf->meshes[i].vertices[vi].normal,
+				.color = gltf->meshes[i].vertices[vi].color,
+				.texcoord = gltf->meshes[i].vertices[vi].uv,
+			};
+		}
+
+		if (strsize(gmesh->textureFile)) {
+			meshes[i].texture = R_LoadTexture(gmesh->textureFile);
+		}
+	}
+
+	model_t model = {
+		.meshCount = gltf->meshCount,
+		.meshes = meshes,
+	};
+
+	return model;
+}
+
+model_t LoadGltfModel(char* path)
+{
+	file_data_t* file = Sys_LoadFile(&__state->assetArena, path);
+	gltf_model_t gltf = gltf_load(file->data);
+	model_t model = ConvertToModel(&gltf);
+	return model;
+}
+
 void Init(state_t* state)
 {
 	state->assetArena = virtual_heap_allocator(MB(100), MB(1));
@@ -76,6 +140,9 @@ void Init(state_t* state)
 	file_data_t* gltf = Sys_LoadFile(&__state->assetArena, "assets/cryopod_base.glb");
 	gltf_model_t cryoGltf = gltf_load(gltf->data);
 	state->cryoMesh = ConvertToMesh(&cryoGltf);
+	state->cryoModel = ConvertToModel(&cryoGltf);
+	state->cubeModel = LoadGltfModel("assets/cube.glb");
+	state->testboxModel = LoadGltfModel("assets/testbox.glb");
 
 	state->window = vid_init_window("Linux Window", 320*4, 240*4, 0);
 

@@ -3,7 +3,6 @@
 //  Copyright 2023 GiantJelly. All rights reserved.
 //
 
-#include "core/sys.h"
 #include <core/core.h>
 #include <core/math.h>
 #include <core/time.h>
@@ -12,19 +11,9 @@
 #include "sys_pc.h"
 #include "r_render.h"
 #include "r_clip.c"
+#include "r_rasterize_scanline.c"
+#include "r_rasterize_bbox.c"
 
-
-typedef enum {
-	R_PERSPECTIVE = 1,
-	R_ORTHO,
-} projection_type_t;
-
-typedef struct {
-	float xFactor;
-	float yFactor;
-	float zFactor;
-	float zOffset;
-} perspective_factors_t;
 
 uint32_t* framebuffer;
 float* depthbuffer;
@@ -32,8 +21,10 @@ vec3_t __rTranslation = {0};
 vec3_t __rRotation = {0};
 vec3_t __rScale = {1, 1, 1};
 texture_t* __rActiveTexture = NULL;
-projection_type_t __rProjectionType = NULL;
+projection_type_t __rProjectionType = R_PROJECTION_NULL;
 perspective_factors_t __rPerspectiveFactors = {0};
+bool_t __rScanlineRasterization = FALSE;
+
 
 color_t Color32(float r, float g, float b, float a)
 {
@@ -42,6 +33,15 @@ color_t Color32(float r, float g, float b, float a)
 		(uint32_t)(g*255.0f)<<8 |
 		(uint32_t)(b*255.0f)<<16 |
 		(uint32_t)(a*255.0f)<<24;
+	return color;
+}
+
+color_t Color32FromVec3(vec3_t v)
+{
+	uint32_t color =
+		(uint32_t)(v.r*255.0f) |
+		(uint32_t)(v.g*255.0f)<<8 |
+		(uint32_t)(v.b*255.0f)<<16;
 	return color;
 }
 
@@ -134,14 +134,6 @@ void R_Clear()
 	}
 }
 
-void R_BlitPixel(int x, int y, color_t color)
-{
-	vidrect_t res = {0, 0, 320, 240};
-	if (x >= 0 && x < res.w && y >= 0 && y < res.h) {
-		framebuffer[y*res.w + x] = color;
-	}
-}
-
 vec3_t R_RotateVector3(vec3_t v, vec3_t rotation)
 {
 	float xCos = cosf(rotation.x);
@@ -174,41 +166,56 @@ vec3_t R_RotateVector3(vec3_t v, vec3_t rotation)
 
 float TriangleArea(vec2_t v0, vec2_t v1, vec2_t v2)
 {
-	return
+	// This gives a signed area depending on the order
+	float result =
 		((v1.y-v0.y)*(v1.x+v0.x)
 		+ (v2.y-v1.y)*(v2.x+v1.x)
 		+ (v0.y-v2.y)*(v0.x+v2.x))
 		* 0.5f;
+
+	// if (result < 0.0f) {
+	// 	return -result;
+	// }
+	return (result);
 }
 
 vec3_t BarycentricCoords(vec2_t coord, vec2_t v0, vec2_t v1, vec2_t v2)
 {
 	float total = TriangleArea(v0, v1, v2);
 	// total = fabs(total);
+
+	if (total < 1.0f) {
+		return vec3f(0.0f);
+	}
+
 	vec3_t result = {
 		TriangleArea(coord, v1, v2) / total,
 		TriangleArea(coord, v2, v0) / total,
 		TriangleArea(coord, v0, v1) / total,
 	};
 
-	if (result.x < 0.0f) {
-		result.x = 0.0f;
-	}
-	if (result.x >= 1.0f) {
-		result.x = 0.999f;
-	}
-	if (result.y < 0.0f) {
-		result.y = 0.0f;
-	}
-	if (result.y >= 1.0f) {
-		result.y = 0.999f;
-	}
-	if (result.z < 0.0f) {
-		result.z = 0.0f;
-	}
-	if (result.z >= 1.0f) {
-		result.z = 0.999f;
-	}
+	// if (isnan(result.z)) {
+	// 	int x =0;
+	// }
+
+	// if (result.x < 0.0f) {
+	// 	result.x = 0.0f;
+	// }
+	// if (result.x >= 1.0f) {
+	// 	result.x = 0.999f;
+	// }
+	// if (result.y < 0.0f) {
+	// 	result.y = 0.0f;
+	// }
+	// if (result.y >= 1.0f) {
+	// 	result.y = 0.999f;
+	// }
+	// if (result.z < 0.0f) {
+	// 	result.z = 0.0f;
+	// }
+	// if (result.z >= 1.0f) {
+	// 	result.z = 0.999f;
+	// }
 
 	return result;
 }
@@ -239,6 +246,16 @@ vertex_t LerpTriVetices(vec2_t coord, vertex_t v0, vertex_t v1, vertex_t v2)
 		v0.texcoord.y*t.x + v1.texcoord.y*t.y + v2.texcoord.y*t.z,
 	};
 
+	// if (isnan(texcoord.x) || isnan(texcoord.y)) {
+	// 	int x = 0;
+	// 	print("NOOOOOOOOOOOOOOO");
+	// }
+
+	// if (isnan(pos.x) || isnan(pos.y)) {
+	// 	int x = 0;
+	// 	print("NOOOOOOOOOOOOOOO");
+	// }
+
 	v.pos = pos;
 	v.color = color3;
 	v.texcoord = texcoord;
@@ -261,26 +278,13 @@ vec4_t ClipSpaceToFramebufferSpace(vec4_t v)
 	return result;
 }
 
-// void R_DrawLine(float v0x, float v0y, float v1x, float v1y, color_t color)
-// {
-	
-// }
-
-// void R_DrawLineTriangles(mvertex_t* verts, int count, color_t color)
-// {
-// 	assert(count % 3 == 0);
-
-// 	// R_DrawLine(verts[0].pos.x, verts[0].pos.y, verts[1].pos.x, verts[1].pos.y, color);
-// 	// R_DrawLine(verts[1].pos.x, verts[1].pos.y, verts[2].pos.x, verts[2].pos.y, color);
-// 	// R_DrawLine(verts[2].pos.x, verts[2].pos.y, verts[0].pos.x, verts[0].pos.y, color);
-// 	for (int i=0; i<count; i+=3) {
-// 		for (int v=0; v<3; ++v) {
-// 			vec3_t v0 = verts[i+v].pos;
-// 			vec3_t v1 = verts[i + (v+1)%3].pos;
-// 			R_DrawLine(v0.x, v0.y, v1.x, v1.y, color);
-// 		}
-// 	}
-// }
+void R_BlitPixel(int x, int y, color_t color)
+{
+	vidrect_t res = {0, 0, 320, 240};
+	if (x >= 0 && x < res.w && y >= 0 && y < res.h) {
+		framebuffer[y*res.w + x] = color;
+	}
+}
 
 /*
 	The Rasterize functions take NDCs
@@ -350,300 +354,26 @@ void R_RasterizeLine(vec4_t v0, vec4_t v1, color_t color)
 	}
 }
 
-// void _RasterizeTriangleHalf(
-// 	vertex_t v0,
-// 	vertex_t v1,
-// 	vertex_t v2,
-// 	float lineStart,
-// 	float lineEnd,
-// 	float startStep,
-// 	float endStep,
-// 	vec2_t startPoint,
-// 	vec2_t endPoint
-// )
+// void R_DrawLine(float v0x, float v0y, float v1x, float v1y, color_t color)
 // {
-// 	vidrect_t res = {0, 0, 320, 240};
-
-// 	for (int l=v0.pos.y; l<=v1.pos.y; ++l) {
-// 		float start = lineStart;
-// 		float end = lineEnd;
-// 		// if (startPoint.x > v0.x) {
-// 		// 	start = min(lineStart, startPoint.x);
-// 		// } else {
-// 		// 	start = max(lineStart, startPoint.x);
-// 		// }
-// 		// if (endPoint.x > v0.x) {
-// 		// 	end = min(lineEnd, endPoint.x);
-// 		// } else {
-// 		// 	end = max(lineEnd, endPoint.x);
-// 		// }
-// 		for (int x=start; x<=end; ++x) {
-// 			if ((int)v1.pos.y-1 == l) {
-// 				int asd = 0;
-// 			}
-
-// 			if (startPoint.x < v0.pos.x && x < startPoint.x) {
-// 				continue;
-// 			}
-// 			if (endPoint.x > v0.pos.x && x > endPoint.x) {
-// 				continue;
-// 			}
-
-// 			// vec3_t triCoords = BarycentricCoords(vec2(x, l), v0.pos.xy, v1.pos.xy, v2.pos.xy);
-// 			// vec3_t color3 = {
-// 			// 	v0.color.r*triCoords.f[0] + v1.color.r*triCoords.f[1] + v2.color.r*triCoords.f[2],
-// 			// 	v0.color.g*triCoords.f[0] + v1.color.g*triCoords.f[1] + v2.color.g*triCoords.f[2],
-// 			// 	v0.color.b*triCoords.f[0] + v1.color.b*triCoords.f[1] + v2.color.b*triCoords.f[2],
-// 			// };
-
-// 			vec3_t t = BarycentricCoords(vec2(x, l), v0.pos.xy, v1.pos.xy, v2.pos.xy);
-
-// 			// if (t.x <= 0 || t.y <= 0 || t.z <= 0) {
-// 			// 	continue;
-// 			// }
-
-// 			vertex_t v = LerpTriVetices(vec2(x, l), v0, v1, v2);
-// 			float w = 1.0f / v.pos.w;
-
-// 			if (depthbuffer[l*res.w + x] < w) {
-// 				continue;
-// 			}
-
-// 			v.texcoord = mul2(v.texcoord, vec2f(w));
-// 			v.color = mul3(v.color, vec3f(w));
-
-// 			uint32_t triColorViz =
-// 				((uint32_t)(t.r*255.0f)<<0) |
-// 				((uint32_t)(t.g*255.0f)<<8) |
-// 				((uint32_t)(t.b*255.0f)<<16);
-
-// 			uint32_t color =
-// 				((uint32_t)(v.color.r*255.0f)<<0) |
-// 				((uint32_t)(v.color.g*255.0f)<<8) |
-// 				((uint32_t)(v.color.b*255.0f)<<16);
-
-// 			int tx = (float)__rActiveTexture->width * v.texcoord.x;
-// 			int ty = (float)__rActiveTexture->height * v.texcoord.y;
-// 			uint32_t texel = __rActiveTexture->texels[ty*__rActiveTexture->width+tx];
-
-// 			uint32_t texCoordViz =
-// 				((uint32_t)((float)tx*8)<<0) |
-// 				((uint32_t)((float)ty*8)<<8);
-
-// 			if (l < 0 || l >= res.h || x < 0 || x >= res.w) {
-// 				continue; // TODO: Shouldn't be needed
-// 			}
-
-// 			framebuffer[l*res.w + x] = MixColor32(color, texel);
-// 			// framebuffer[l*res.w + x] = color;
-// 			// framebuffer[l*res.w + x] = (1.0f / v.pos.w) * 255.0f;
-// 			depthbuffer[l*res.w + x] = w;
-// 		}
-
-// 		lineStart += startStep;
-// 		lineEnd += endStep;
-// 	}
+	
 // }
 
-void R_RasterizeTriangle(vertex_t v0, vertex_t v1, vertex_t v2, color_t color)
-{
-	vidrect_t res = {0, 0, 320, 240};
+// void R_DrawLineTriangles(mvertex_t* verts, int count, color_t color)
+// {
+// 	assert(count % 3 == 0);
 
-	// Divide by W
-	v0.pos.xyz = div3(v0.pos.xyz, vec3f(v0.pos.w));
-	v1.pos.xyz = div3(v1.pos.xyz, vec3f(v1.pos.w));
-	v2.pos.xyz = div3(v2.pos.xyz, vec3f(v2.pos.w));
-
-	// Calc reciprocals of UV, Color and W for perspective correction
-	v0.texcoord = div2(v0.texcoord, vec2f(v0.pos.w));
-	v1.texcoord = div2(v1.texcoord, vec2f(v1.pos.w));
-	v2.texcoord = div2(v2.texcoord, vec2f(v2.pos.w));
-	v0.color = div3(v0.color, vec3f(v0.pos.w));
-	v1.color = div3(v1.color, vec3f(v1.pos.w));
-	v2.color = div3(v2.color, vec3f(v2.pos.w));
-	v0.pos.w = 1.0f / v0.pos.w;
-	v1.pos.w = 1.0f / v1.pos.w;
-	v2.pos.w = 1.0f / v2.pos.w;
-
-	// Transform NDC to framebuffer coords
-	v0.pos = ClipSpaceToFramebufferSpace(v0.pos);
-	v1.pos = ClipSpaceToFramebufferSpace(v1.pos);
-	v2.pos = ClipSpaceToFramebufferSpace(v2.pos);
-
-	// Order vertices along y lowest to highest
-	if (v1.pos.y < v0.pos.y) SWAP(v0, v1);
-	if (v2.pos.y < v1.pos.y) SWAP(v1, v2);
-	if (v1.pos.y < v0.pos.y) SWAP(v0, v1);
-
-	// First half
-	int line = 0;
-	float lineStart = v0.pos.x;
-	float lineEnd = v0.pos.x;
-	vec2_t longEdgePoint = {v0.pos.x + ((v1.pos.y-v0.pos.y) / (v2.pos.y-v0.pos.y) * (v2.pos.x-v0.pos.x)), v1.pos.y};
-	vec2_t startPoint = longEdgePoint;
-	vec2_t endPoint = v1.pos.xy;
-	if (endPoint.x < startPoint.x) {
-		SWAP(startPoint, endPoint);
-	}
-	float startStep = (startPoint.x-v0.pos.x) / (startPoint.y-v0.pos.y);
-	float endStep = (endPoint.x-v0.pos.x) / (endPoint.y-v0.pos.y);
-	
-	// ++lineEnd.x;
-	int lineCount = v1.pos.y-v0.pos.y;
-	// if ((int)v0.pos.y != (int)v1.pos.y) {
-		// _RasterizeTriangleHalf(v0, v1, v2, lineStart, lineEnd, startStep, endStep, startPoint, endPoint);
-
-		for (int l=v0.pos.y; l<=v1.pos.y; ++l) {
-			float start = lineStart;
-			float end = lineEnd;
-			// if (startPoint.x > v0.x) {
-			// 	start = min(lineStart, startPoint.x);
-			// } else {
-			// 	start = max(lineStart, startPoint.x);
-			// }
-			// if (endPoint.x > v0.x) {
-			// 	end = min(lineEnd, endPoint.x);
-			// } else {
-			// 	end = max(lineEnd, endPoint.x);
-			// }
-			for (int x=start; x<=end; ++x) {
-				if ((int)v1.pos.y-1 == l) {
-					int asd = 0;
-				}
-
-				if (startPoint.x < v0.pos.x && x < startPoint.x) {
-					continue;
-				}
-				if (endPoint.x > v0.pos.x && x > endPoint.x) {
-					continue;
-				}
-
-				// vec3_t triCoords = BarycentricCoords(vec2(x, l), v0.pos.xy, v1.pos.xy, v2.pos.xy);
-				// vec3_t color3 = {
-				// 	v0.color.r*triCoords.f[0] + v1.color.r*triCoords.f[1] + v2.color.r*triCoords.f[2],
-				// 	v0.color.g*triCoords.f[0] + v1.color.g*triCoords.f[1] + v2.color.g*triCoords.f[2],
-				// 	v0.color.b*triCoords.f[0] + v1.color.b*triCoords.f[1] + v2.color.b*triCoords.f[2],
-				// };
-
-				vec3_t t = BarycentricCoords(vec2(x, l), v0.pos.xy, v1.pos.xy, v2.pos.xy);
-
-				// if (t.x <= 0 || t.y <= 0 || t.z <= 0) {
-				// 	continue;
-				// }
-
-				vertex_t v = LerpTriVetices(vec2(x, l), v0, v1, v2);
-				float w = 1.0f / v.pos.w;
-
-				if (depthbuffer[l*res.w + x] < w) {
-					continue;
-				}
-
-				v.texcoord = mul2(v.texcoord, vec2f(w));
-				v.color = mul3(v.color, vec3f(w));
-
-				uint32_t triColorViz =
-					((uint32_t)(t.r*255.0f)<<0) |
-					((uint32_t)(t.g*255.0f)<<8) |
-					((uint32_t)(t.b*255.0f)<<16);
-
-				uint32_t color =
-					((uint32_t)(v.color.r*255.0f)<<0) |
-					((uint32_t)(v.color.g*255.0f)<<8) |
-					((uint32_t)(v.color.b*255.0f)<<16);
-
-				int tx = (float)__rActiveTexture->width * v.texcoord.x;
-				int ty = (float)__rActiveTexture->height * v.texcoord.y;
-				// uint32_t texel = __rActiveTexture->texels[ty*__rActiveTexture->width+tx];
-				uint32_t texel = 0xFFFFFFFF;
-
-				uint32_t texCoordViz =
-					((uint32_t)((float)tx*8)<<0) |
-					((uint32_t)((float)ty*8)<<8);
-
-				if (l < 0 || l >= res.h || x < 0 || x >= res.w) {
-					continue; // TODO: Shouldn't be needed
-				}
-
-				framebuffer[l*res.w + x] = MixColor32(color, texel);
-				// framebuffer[l*res.w + x] = color;
-				// framebuffer[l*res.w + x] = (1.0f / v.pos.w) * 255.0f;
-				depthbuffer[l*res.w + x] = w;
-			}
-
-			lineStart += startStep;
-			lineEnd += endStep;
-		}
-	// }
-
-	// Second half
-	lineStart = longEdgePoint.x;
-	lineEnd = v1.pos.x;
-	startStep = (v2.pos.x-longEdgePoint.x) / (v2.pos.y-longEdgePoint.y);
-	endStep = (v2.pos.x-v1.pos.x) / (v2.pos.y-v1.pos.y);
-	if (v1.pos.x < longEdgePoint.x) {
-		SWAP(lineStart, lineEnd);
-		SWAP(startStep, endStep);
-	}
-
-	// _RasterizeTriangleHalf(v0, v1, v2, lineStart, lineEnd, startStep, endStep, startPoint, endPoint);
-
-	// if ((int)v2.y != (int)v1.y) {
-		for (int l=v1.pos.y; l<=v2.pos.y; ++l) {
-			for (int x=lineStart; x<=lineEnd; ++x) {
-				vec3_t t = BarycentricCoords(vec2(x, l), v0.pos.xy, v1.pos.xy, v2.pos.xy);
-				uint32_t triColorViz =
-					((uint32_t)(t.r*255.0f)<<0) |
-					((uint32_t)(t.g*255.0f)<<8) |
-					((uint32_t)(t.b*255.0f)<<16);
-
-				vertex_t v = LerpTriVetices(vec2(x, l), v0, v1, v2);
-				float w = 1.0f / v.pos.w;
-
-				if (depthbuffer[l*res.w + x] < w) {
-					continue;
-				}
-
-				v.texcoord = mul2(v.texcoord, vec2f(1.0f / v.pos.w));
-				v.color = mul3(v.color, vec3f(1.0f / v.pos.w));
-
-				uint32_t color =
-					((uint32_t)(v.color.r*255.0f)<<0) |
-					((uint32_t)(v.color.g*255.0f)<<8) |
-					((uint32_t)(v.color.b*255.0f)<<16);
-
-				int tx = (float)__rActiveTexture->width * v.texcoord.x;
-				int ty = (float)__rActiveTexture->height * v.texcoord.y;
-				// uint32_t texel = __rActiveTexture->texels[ty*__rActiveTexture->width+tx];
-				uint32_t texel = 0xFFFFFFFF;
-
-				uint32_t texCoordViz =
-					((uint32_t)((float)tx*8)<<0) |
-					((uint32_t)((float)ty*8)<<8);
-
-				if (l < 0 || l >= res.h || x < 0 || x >= res.w) {
-					continue; // TODO: Shouldn't be needed
-				}
-
-				framebuffer[l*res.w + x] = MixColor32(color, texel);
-				// framebuffer[l*res.w + x] = color;
-				// framebuffer[l*res.w + x] = (1.0f / v.pos.w) * 255.0f;
-				depthbuffer[l*res.w + x] = w;
-			}
-
-			lineStart += startStep;
-			lineEnd += endStep;
-		}
-	// }
-
-	// Debug lines
-	// R_RasterizeLine(v0.pos, v1.pos, color);
-	// R_RasterizeLine(v1.pos, v2.pos, color);
-	// R_RasterizeLine(v0.pos, v2.pos, color);
-
-	// R_DrawLine(v0.pos.x, v0.pos.y, v1.pos.x, v1.pos.y, color);
-	// R_DrawLine(v1.pos.x, v1.pos.y, v2.pos.x, v2.pos.y, color);
-	// R_DrawLine(v0.pos.x, v0.pos.y, v2.pos.x, v2.pos.y, color);
-}
+// 	// R_DrawLine(verts[0].pos.x, verts[0].pos.y, verts[1].pos.x, verts[1].pos.y, color);
+// 	// R_DrawLine(verts[1].pos.x, verts[1].pos.y, verts[2].pos.x, verts[2].pos.y, color);
+// 	// R_DrawLine(verts[2].pos.x, verts[2].pos.y, verts[0].pos.x, verts[0].pos.y, color);
+// 	for (int i=0; i<count; i+=3) {
+// 		for (int v=0; v<3; ++v) {
+// 			vec3_t v0 = verts[i+v].pos;
+// 			vec3_t v1 = verts[i + (v+1)%3].pos;
+// 			R_DrawLine(v0.x, v0.y, v1.x, v1.y, color);
+// 		}
+// 	}
+// }
 
 vertex_t R_TransformAndProject(mvertex_t in)
 {
@@ -665,15 +395,28 @@ vertex_t R_TransformAndProject(mvertex_t in)
 	return out;
 }
 
+vec3_t R_LightVertex(mvertex_t v)
+{
+	float ambient = 0.1f;
+	vec3_t sunDir = normalize3(vec3(1, 1, 1));
+	float sunLight = max(dot3(v.normal, sunDir), 0.0f);
+	float light = ambient + sunLight;
+	return vec3f(min(light, 1.0f));
+}
+
 void R_DrawTriangle(mvertex_t in0, mvertex_t in1, mvertex_t in2, color_t color)
 {
 	// vertex_t v0 = MVertexToVertex(in0);
 	// vertex_t v1 = MVertexToVertex(in1);
 	// vertex_t v2 = MVertexToVertex(in2);
 
+	// World Transform
 	in0.pos = R_RotateVector3(in0.pos, __rRotation);
 	in1.pos = R_RotateVector3(in1.pos, __rRotation);
 	in2.pos = R_RotateVector3(in2.pos, __rRotation);
+	in0.normal = R_RotateVector3(in0.normal, __rRotation);
+	in1.normal = R_RotateVector3(in1.normal, __rRotation);
+	in2.normal = R_RotateVector3(in2.normal, __rRotation);
 	// vertex_t* v = verts + i;
 
 	in0.pos = mul3(in0.pos, __rScale);
@@ -684,6 +427,13 @@ void R_DrawTriangle(mvertex_t in0, mvertex_t in1, mvertex_t in2, color_t color)
 	in1.pos = add3(in1.pos, __rTranslation);
 	in2.pos = add3(in2.pos, __rTranslation);
 
+	// Lighting
+	// Gouraud shading
+	in0.color = mul3(in0.color, R_LightVertex(in0));
+	in1.color = mul3(in1.color, R_LightVertex(in1));
+	in2.color = mul3(in2.color, R_LightVertex(in2));
+
+	// Projection transform
 	vertex_t v0;
 	vertex_t v1;
 	vertex_t v2;
@@ -705,6 +455,7 @@ void R_DrawTriangle(mvertex_t in0, mvertex_t in1, mvertex_t in2, color_t color)
 	// v1.pos.w = 1.0f;
 	// v2.pos.w = 1.0f;
 
+	// Screen clipping
 	polygon_t poly = {.vertices={v0, v1, v2}, .count=3};
 	poly = R_ClipWithPlane(poly, PLANE_X0);
 	poly = R_ClipWithPlane(poly, PLANE_X1);
@@ -713,12 +464,17 @@ void R_DrawTriangle(mvertex_t in0, mvertex_t in1, mvertex_t in2, color_t color)
 	poly = R_ClipWithPlane(poly, PLANE_Z0);
 	poly = R_ClipWithPlane(poly, PLANE_Z1);
 
+	// Rasterize loop
 	for (int vi=0; vi<(poly.count-2); ++vi) {
 		vertex_t t0 = poly.vertices[0];
 		vertex_t t1 = poly.vertices[vi+1];
 		vertex_t t2 = poly.vertices[vi+2];
 
-		R_RasterizeTriangle(t0, t1, t2, color);
+		if (__rScanlineRasterization) {
+			R_RasterizeScanlineTriangle(t0, t1, t2, color);
+		} else {
+			R_RasterizeBBoxTriangle(t0, t1, t2, color);
+		}
 
 		// R_RasterizePoint(vec3(t0.pos.x, t0.pos.y, 0), 0xFFFFFF);
 		// R_RasterizePoint(vec3(t1.pos.x, t1.pos.y, 0), 0xFFFFFF);
@@ -808,30 +564,22 @@ void R_DrawQuads(mvertex_t* verts, int count, color_t color)
 	}
 }
 
-texture_t testTexture;
-
-texture_t R_LoadTexture(char* path)
+void R_DrawModel(model_t model, color_t color)
 {
-	state_t* state = GetState();
-
-	file_data_t* file = Sys_LoadFile(&state->assetArena, path);
-
-	texture_t result;
-	bmp_info_t info = bmp_get_info(file->data);
-	result.texels = alloc_memory(&state->assetArena, info.width*info.height*sizeof(color_t));
-	result.width = info.width;
-	result.height = info.height;
-	bmp_load_rgba32(file->data, result.texels);
-
-	for (int idx=0; idx<result.width*result.height; ++idx) {
-		vec4_t c = Color32ToFloat(result.texels[idx]);
-		result.texels[idx] = Color32(c.b, c.g, c.r, c.a);
+	for (int mi=0; mi<1; ++mi) {
+		R_Texture(NULL);///&model.meshes[mi].texture);
+		R_DrawTriangles(model.meshes[mi].vertices, model.meshes[mi].vertexCount, color);
 	}
-
-	free_memory(&state->assetArena, file);
-
-	return result;
 }
+
+void R_DrawLineModel(model_t model, color_t color)
+{
+	for (int mi=0; mi<model.meshCount; ++mi) {
+		R_DrawLineTriangles(model.meshes[mi].vertices, model.meshes[mi].vertexCount, color);
+	}
+}
+
+texture_t testTexture;
 
 void R_Init()
 {
@@ -1006,29 +754,38 @@ void Render3DModelTestScene()
 	x += delta * 1.0f;
 
 	mvertex_t verts2[] = {
-		{vec3(-0.5f, -0.5f, +0.5f), .texcoord=vec2(0, 0), /*.color=vec3(1, 0, 0)},*/ .color=vec3(1, 1, 1)},
-		{vec3(+0.5f, -0.5f, +0.5f), .texcoord=vec2(1, 0), /*.color=vec3(0, 1, 0)},*/ .color=vec3(1, 1, 1)},
-		{vec3(+0.5f, +0.5f, +0.5f), .texcoord=vec2(1, 1), /*.color=vec3(0, 0, 1)},*/ .color=vec3(1, 1, 1)},
-		{vec3(-0.5f, +0.5f, +0.5f), .texcoord=vec2(0, 1), /*.color=vec3(1, 0, 1)},*/ .color=vec3(1, 1, 1)},
+		{vec3(-0.5f, -0.5f, +0.5f), .texcoord=vec2(0, 0), /*.color=vec3(1, 0, 0)},*/ .color=vec3(1, 1, 1), .normal=vec3(0, 0, 1)},
+		{vec3(+0.5f, -0.5f, +0.5f), .texcoord=vec2(1, 0), /*.color=vec3(0, 1, 0)},*/ .color=vec3(1, 1, 1), .normal=vec3(0, 0, 1)},
+		{vec3(+0.5f, +0.5f, +0.5f), .texcoord=vec2(1, 1), /*.color=vec3(0, 0, 1)},*/ .color=vec3(1, 1, 1), .normal=vec3(0, 0, 1)},
+		{vec3(-0.5f, +0.5f, +0.5f), .texcoord=vec2(0, 1), /*.color=vec3(1, 0, 1)},*/ .color=vec3(1, 1, 1), .normal=vec3(0, 0, 1)},
 
-		{vec3(+0.5f, -0.5f, +0.5f), .texcoord=vec2(0, 0), /*.color=vec3(1, 0, 0)},*/ .color=vec3(1, 1, 1)},
-		{vec3(+0.5f, -0.5f, -0.5f), .texcoord=vec2(1, 0), /*.color=vec3(0, 1, 0)},*/ .color=vec3(1, 1, 1)},
-		{vec3(+0.5f, +0.5f, -0.5f), .texcoord=vec2(1, 1), /*.color=vec3(0, 0, 1)},*/ .color=vec3(1, 1, 1)},
-		{vec3(+0.5f, +0.5f, +0.5f), .texcoord=vec2(0, 1), /*.color=vec3(1, 0, 1)},*/ .color=vec3(1, 1, 1)},
+		{vec3(+0.5f, -0.5f, +0.5f), .texcoord=vec2(0, 0), /*.color=vec3(1, 0, 0)},*/ .color=vec3(1, 1, 1), .normal=vec3(1, 0, 0)},
+		{vec3(+0.5f, -0.5f, -0.5f), .texcoord=vec2(1, 0), /*.color=vec3(0, 1, 0)},*/ .color=vec3(1, 1, 1), .normal=vec3(1, 0, 0)},
+		{vec3(+0.5f, +0.5f, -0.5f), .texcoord=vec2(1, 1), /*.color=vec3(0, 0, 1)},*/ .color=vec3(1, 1, 1), .normal=vec3(1, 0, 0)},
+		{vec3(+0.5f, +0.5f, +0.5f), .texcoord=vec2(0, 1), /*.color=vec3(1, 0, 1)},*/ .color=vec3(1, 1, 1), .normal=vec3(1, 0, 0)},
 
-		{vec3(-0.5f, -0.5f, -0.5f), .texcoord=vec2(0, 0), /*.color=vec3(1, 0, 0)},*/ .color=vec3(1, 1, 1)},
-		{vec3(-0.5f, -0.5f, +0.5f), .texcoord=vec2(1, 0), /*.color=vec3(0, 1, 0)},*/ .color=vec3(1, 1, 1)},
-		{vec3(-0.5f, +0.5f, +0.5f), .texcoord=vec2(1, 1), /*.color=vec3(0, 0, 1)},*/ .color=vec3(1, 1, 1)},
-		{vec3(-0.5f, +0.5f, -0.5f), .texcoord=vec2(0, 1), /*.color=vec3(1, 0, 1)},*/ .color=vec3(1, 1, 1)},
+		{vec3(-0.5f, -0.5f, -0.5f), .texcoord=vec2(0, 0), /*.color=vec3(1, 0, 0)},*/ .color=vec3(1, 1, 1), .normal=vec3(-1, 0, 0)},
+		{vec3(-0.5f, -0.5f, +0.5f), .texcoord=vec2(1, 0), /*.color=vec3(0, 1, 0)},*/ .color=vec3(1, 1, 1), .normal=vec3(-1, 0, 0)},
+		{vec3(-0.5f, +0.5f, +0.5f), .texcoord=vec2(1, 1), /*.color=vec3(0, 0, 1)},*/ .color=vec3(1, 1, 1), .normal=vec3(-1, 0, 0)},
+		{vec3(-0.5f, +0.5f, -0.5f), .texcoord=vec2(0, 1), /*.color=vec3(1, 0, 1)},*/ .color=vec3(1, 1, 1), .normal=vec3(-1, 0, 0)},
 	};
 
 	// R_Projection(R_PERSPECTIVE);
 	R_PerspectiveProjection(70, 320.0f/240.0f, 0.1f, 100.0f);
 
-	R_SetTranslation(vec3(0.0f, 0.0, -3.0f - (sinf(x) * 0.5f)));
+	R_SetTranslation(vec3(0.0f, 0.0, -1.5f - (sinf(x) * 0.5f)));
 	R_SetRotation(vec3(0, x, 0));
 	// R_SetRotation(vec3(0, -0.5, 0));
 	R_SetScale(vec3f(0.5f));
-	// R_DrawQuads(verts2, 12, 0xFF8888);
-	R_DrawLineTriangles(state->cryoMesh.vertices, state->cryoMesh.vertexCount, 0xFF8888);
+	R_DrawQuads(verts2, 12, 0xFFAA88);
+
+	// {
+	// 	R_SetTranslation(vec3(0.0f, 0.0, -0.7f));
+	// 	R_SetRotation(vec3(0, 0.0f + sinf(x)*0.2f, 0));
+	// 	R_DrawQuads(verts2, 4, 0xFF8888);
+	// }
+
+	// R_DrawLineTriangles(state->cryoMesh.vertices, state->cryoMesh.vertexCount, 0xFF8888);
+	// R_DrawModel(state->testboxModel, 0xFF8888);
+	// R_DrawModel(state->cryoModel, 0xFF8888);
 }
